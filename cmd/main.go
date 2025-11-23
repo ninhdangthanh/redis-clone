@@ -3,77 +3,21 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
+	"redis-clone/internal"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-type Store struct {
-	mu   sync.RWMutex
-	data map[string][]byte
-}
-
-func NewStore() *Store {
-	return &Store{data: make(map[string][]byte)}
-}
-
-func (s *Store) Set(key string, val []byte) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data[key] = val
-}
-
-func (s *Store) Get(key string) ([]byte, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	v, ok := s.data[key]
-	return v, ok
-}
-
-// RESP helpers
-func readLine(r *bufio.Reader) (string, error) {
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(line, "\r\n"), nil
-}
-
-func readBulkString(r *bufio.Reader) (string, error) {
-	lenLine, err := readLine(r)
-	if err != nil {
-		return "", err
-	}
-	if lenLine == "$-1" {
-		return "", nil
-	}
-	if !strings.HasPrefix(lenLine, "$") {
-		return "", fmt.Errorf("expected $, got %q", lenLine)
-	}
-
-	l, err := strconv.Atoi(lenLine[1:])
-	if err != nil {
-		return "", err
-	}
-
-	buf := make([]byte, l+2) // include \r\n
-	_, err = io.ReadFull(r, buf)
-	if err != nil {
-		return "", err
-	}
-
-	return string(buf[:l]), nil
-}
-
-func handleConn(conn net.Conn, store *Store) {
+func handleConn(conn net.Conn, store *internal.Store, accounts *internal.AccountStore) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
 
+	var authenticated bool
+
 	for {
-		line, err := readLine(r)
+		line, err := internal.ReadLine(r)
 		if err != nil {
 			return
 		}
@@ -86,7 +30,7 @@ func handleConn(conn net.Conn, store *Store) {
 		n, _ := strconv.Atoi(line[1:])
 		args := make([]string, 0, n)
 		for i := 0; i < n; i++ {
-			s, err := readBulkString(r)
+			s, err := internal.ReadBulkString(r)
 			if err != nil {
 				return
 			}
@@ -114,7 +58,27 @@ func handleConn(conn net.Conn, store *Store) {
 				fmt.Fprintf(w, "$%d\r\n%s\r\n", len(args[1]), args[1])
 			}
 
+		case "AUTH":
+			if len(args) != 3 {
+				fmt.Fprint(w, "-ERR wrong number of arguments for AUTH\r\n")
+			} else {
+				user := args[1]
+				pass := args[2]
+
+				if accounts.Validate(user, pass) {
+					authenticated = true
+					fmt.Fprint(w, "+OK\r\n")
+				} else {
+					fmt.Fprint(w, "-ERR invalid username/password\r\n")
+				}
+			}
+
 		case "SET":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
+
 			if len(args) != 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SET\r\n")
 			} else {
@@ -123,6 +87,11 @@ func handleConn(conn net.Conn, store *Store) {
 			}
 
 		case "GET":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
+
 			if len(args) != 2 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for GET\r\n")
 			} else {
@@ -148,13 +117,18 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("listening on :6379")
-	store := NewStore()
+	store := internal.NewStore()
+	accounts := internal.NewAccountStore()
+
+	accounts.AddUser("admin", "admin")
+	accounts.AddUser("dev", "dev")
+	accounts.AddUser("sale", "sale")
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			continue
 		}
-		go handleConn(conn, store)
+		go handleConn(conn, store, accounts)
 	}
 }
