@@ -75,7 +75,7 @@ func (s *Store) Get(user, key string) ([]byte, bool) {
 	return v.Str, true
 }
 
-func (s *Store) Del(user string, keys []string) bool {
+func (s *Store) Del(user string, keys []string) int {
 	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,7 +87,7 @@ func (s *Store) Del(user string, keys []string) bool {
 			deleted++
 		}
 	}
-	return deleted > 0
+	return deleted
 }
 
 func (s *Store) LPush(user, key string, val []byte) {
