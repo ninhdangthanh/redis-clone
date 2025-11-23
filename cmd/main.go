@@ -15,6 +15,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 	w := bufio.NewWriter(conn)
 
 	var authenticated bool
+	var username string
 
 	for {
 		line, err := internal.ReadLine(r)
@@ -69,6 +70,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 
 				if accounts.Validate(user, pass) {
 					authenticated = true
+					username = user
 					fmt.Fprint(w, "+OK\r\n")
 				} else {
 					fmt.Fprint(w, "-ERR invalid username/password\r\n")
@@ -89,7 +91,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			if len(args) != 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SET\r\n")
 			} else {
-				store.Set(args[1], []byte(args[2]))
+				store.Set(username, args[1], []byte(args[2]))
 				fmt.Fprint(w, "+OK\r\n")
 			}
 
@@ -101,7 +103,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			if len(args) != 2 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for GET\r\n")
 			} else {
-				val, ok := store.Get(args[1])
+				val, ok := store.Get(username, args[1])
 				if !ok {
 					fmt.Fprint(w, "$-1\r\n")
 				} else {
@@ -116,9 +118,9 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				break
 			}
 			for _, val := range args[2:] {
-				store.LPush(args[1], []byte(val))
+				store.LPush(username, args[1], []byte(val))
 			}
-			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(args[1], 0, -1)))
+			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(username, args[1], 0, -1)))
 
 		case "RPUSH":
 			if len(args) < 3 {
@@ -126,9 +128,9 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				break
 			}
 			for _, val := range args[2:] {
-				store.RPush(args[1], []byte(val))
+				store.RPush(username, args[1], []byte(val))
 			}
-			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(args[1], 0, -1)))
+			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(username, args[1], 0, -1)))
 
 		case "LRANGE":
 			if len(args) != 4 {
@@ -137,7 +139,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			}
 			start, _ := strconv.Atoi(args[2])
 			stop, _ := strconv.Atoi(args[3])
-			values := store.LRange(args[1], start, stop)
+			values := store.LRange(username, args[1], start, stop)
 			fmt.Fprintf(w, "*%d\r\n", len(values))
 			for _, val := range values {
 				fmt.Fprintf(w, "$%d\r\n%s\r\n", len(val), val)
@@ -151,7 +153,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			}
 			added := 0
 			for _, val := range args[2:] {
-				if store.SAdd(args[1], []byte(val)) {
+				if store.SAdd(username, args[1], []byte(val)) {
 					added++
 				}
 			}
@@ -162,7 +164,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				fmt.Fprint(w, "-ERR wrong number of arguments for SMEMBERS\r\n")
 				break
 			}
-			members := store.SMembers(args[1])
+			members := store.SMembers(username, args[1])
 			fmt.Fprintf(w, "*%d\r\n", len(members))
 			for _, val := range members {
 				fmt.Fprintf(w, "$%d\r\n%s\r\n", len(val), val)
@@ -174,7 +176,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				fmt.Fprint(w, "-ERR wrong number of arguments for HSET\r\n")
 				break
 			}
-			newField := store.HSet(args[1], args[2], []byte(args[3]))
+			newField := store.HSet(username, args[1], args[2], []byte(args[3]))
 			fmt.Fprintf(w, ":%d\r\n", newField)
 
 		case "HGET":
@@ -182,7 +184,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				fmt.Fprint(w, "-ERR wrong number of arguments for HGET\r\n")
 				break
 			}
-			val, ok := store.HGet(args[1], args[2])
+			val, ok := store.HGet(username, args[1], args[2])
 			if !ok {
 				fmt.Fprint(w, "$-1\r\n")
 			} else {

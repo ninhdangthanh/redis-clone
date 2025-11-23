@@ -21,37 +21,49 @@ type Value struct {
 
 type Store struct {
 	mu   sync.RWMutex
-	data map[string]*Value
+	data map[string]map[string]*Value
 }
 
 func NewStore() *Store {
-	return &Store{data: make(map[string]*Value)}
+	return &Store{data: make(map[string]map[string]*Value)}
 }
 
-func (s *Store) Set(key string, val []byte) {
+func (s *Store) getUserData(user string) map[string]*Value {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = &Value{Type: StringType, Str: val}
+	if _, ok := s.data[user]; !ok {
+		s.data[user] = make(map[string]*Value)
+	}
+	return s.data[user]
 }
 
-func (s *Store) Get(key string) ([]byte, bool) {
+func (s *Store) Set(user, key string, val []byte) {
+	ud := s.getUserData(user)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ud[key] = &Value{Type: StringType, Str: val}
+}
+
+func (s *Store) Get(user, key string) ([]byte, bool) {
+	ud := s.getUserData(user)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok || v.Type != StringType {
 		return nil, false
 	}
 	return v.Str, true
 }
 
-func (s *Store) LPush(key string, val []byte) {
+func (s *Store) LPush(user, key string, val []byte) {
+	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok {
 		v = &Value{Type: ListType}
-		s.data[key] = v
+		ud[key] = v
 	}
 	if v.Type != ListType {
 		return
@@ -60,14 +72,15 @@ func (s *Store) LPush(key string, val []byte) {
 	v.List = append([][]byte{val}, v.List...)
 }
 
-func (s *Store) RPush(key string, val []byte) {
+func (s *Store) RPush(user, key string, val []byte) {
+	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok {
 		v = &Value{Type: ListType}
-		s.data[key] = v
+		ud[key] = v
 	}
 	if v.Type != ListType {
 		return
@@ -76,11 +89,12 @@ func (s *Store) RPush(key string, val []byte) {
 	v.List = append(v.List, val)
 }
 
-func (s *Store) LRange(key string, start, stop int) [][]byte {
+func (s *Store) LRange(user, key string, start, stop int) [][]byte {
+	ud := s.getUserData(user)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok || v.Type != ListType {
 		return nil
 	}
@@ -105,14 +119,15 @@ func (s *Store) LRange(key string, start, stop int) [][]byte {
 	return v.List[start : stop+1]
 }
 
-func (s *Store) SAdd(key string, val []byte) bool {
+func (s *Store) SAdd(user, key string, val []byte) bool {
+	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok {
 		v = &Value{Type: SetType, Set: make(map[string]struct{})}
-		s.data[key] = v
+		ud[key] = v
 	}
 	if v.Type != SetType {
 		return false
@@ -123,11 +138,12 @@ func (s *Store) SAdd(key string, val []byte) bool {
 	return !exists
 }
 
-func (s *Store) SMembers(key string) [][]byte {
+func (s *Store) SMembers(user, key string) [][]byte {
+	ud := s.getUserData(user)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok || v.Type != SetType {
 		return nil
 	}
@@ -139,14 +155,15 @@ func (s *Store) SMembers(key string) [][]byte {
 	return members
 }
 
-func (s *Store) HSet(key, field string, val []byte) int {
+func (s *Store) HSet(user, key, field string, val []byte) int {
+	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok {
 		v = &Value{Type: HashType, Hash: make(map[string][]byte)}
-		s.data[key] = v
+		ud[key] = v
 	}
 	if v.Type != HashType {
 		return 0
@@ -161,11 +178,12 @@ func (s *Store) HSet(key, field string, val []byte) int {
 	return 1
 }
 
-func (s *Store) HGet(key, field string) ([]byte, bool) {
+func (s *Store) HGet(user, key, field string) ([]byte, bool) {
+	ud := s.getUserData(user)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := s.data[key]
+	v, ok := ud[key]
 	if !ok || v.Type != HashType {
 		return nil, false
 	}
