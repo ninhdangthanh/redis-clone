@@ -90,7 +90,7 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				break
 			}
 
-			if len(args) < 3 {
+			if len(args) != 3 && len(args) != 5 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SET\r\n")
 				break
 			}
