@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net"
 	"redis-clone/internal"
+	"redis-clone/internal/auth"
+	"redis-clone/internal/store"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func handleConn(conn net.Conn, store *internal.Store, accounts *internal.AccountStore) {
+func handleConn(conn net.Conn, store *store.Store, accounts *auth.AccountStore) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -283,8 +285,8 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("listening on :6379")
-	store := internal.NewStore()
-	accounts := internal.NewAccountStore()
+	store := store.NewStore()
+	accounts := auth.NewAccountStore()
 
 	accounts.AddUser("admin", "admin")
 	accounts.AddUser("ninh", "ninh")

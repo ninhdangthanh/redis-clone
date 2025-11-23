@@ -1,4 +1,4 @@
-package internal
+package store
 
 import (
 	"fmt"
@@ -73,6 +73,21 @@ func (s *Store) Get(user, key string) ([]byte, bool) {
 		return nil, false
 	}
 	return v.Str, true
+}
+
+func (s *Store) Del(user string, keys []string) bool {
+	ud := s.getUserData(user)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deleted := 0
+	for _, key := range keys {
+		if _, ok := ud[key]; ok {
+			delete(ud, key)
+			deleted++
+		}
+	}
+	return deleted > 0
 }
 
 func (s *Store) LPush(user, key string, val []byte) {
