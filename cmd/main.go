@@ -88,12 +88,41 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
 				break
 			}
-			if len(args) != 3 {
+
+			if len(args) < 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SET\r\n")
-			} else {
-				store.Set(username, args[1], []byte(args[2]))
-				fmt.Fprint(w, "+OK\r\n")
+				break
 			}
+
+			key := args[1]
+			val := []byte(args[2])
+			var ttlMs int64 = 0
+
+			if len(args) >= 5 {
+				switch strings.ToUpper(args[3]) {
+				case "EX":
+					seconds, err := strconv.ParseInt(args[4], 10, 64)
+					if err != nil || seconds < 0 {
+						fmt.Fprint(w, "-ERR invalid expire time\r\n")
+						break
+					}
+					ttlMs = seconds * 1000
+				case "PX":
+					ms, err := strconv.ParseInt(args[4], 10, 64)
+					if err != nil || ms < 0 {
+						fmt.Fprint(w, "-ERR invalid expire time\r\n")
+						break
+					}
+					ttlMs = ms
+				default:
+					fmt.Fprint(w, "-ERR syntax error\r\n")
+					continue
+				}
+			}
+
+			// Pass ttlMs = 0 for no expiration
+			store.Set(username, key, val, ttlMs)
+			fmt.Fprint(w, "+OK\r\n")
 
 		case "GET":
 			if !authenticated {
@@ -113,6 +142,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 
 		// --- list commands ---
 		case "LPUSH":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) < 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for LPUSH\r\n")
 				break
@@ -123,6 +156,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(username, args[1], 0, -1)))
 
 		case "RPUSH":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) < 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for RPUSH\r\n")
 				break
@@ -133,6 +170,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			fmt.Fprintf(w, ":%d\r\n", len(store.LRange(username, args[1], 0, -1)))
 
 		case "LRANGE":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) != 4 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for LRANGE\r\n")
 				break
@@ -147,6 +188,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 
 		// --- set commands ---
 		case "SADD":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) < 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SADD\r\n")
 				break
@@ -160,6 +205,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			fmt.Fprintf(w, ":%d\r\n", added)
 
 		case "SMEMBERS":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) != 2 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for SMEMBERS\r\n")
 				break
@@ -172,6 +221,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 
 		// --- hash commands ---
 		case "HSET":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) != 4 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for HSET\r\n")
 				break
@@ -180,6 +233,10 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			fmt.Fprintf(w, ":%d\r\n", newField)
 
 		case "HGET":
+			if !authenticated {
+				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
+				break
+			}
 			if len(args) != 3 {
 				fmt.Fprint(w, "-ERR wrong number of arguments for HGET\r\n")
 				break
@@ -190,6 +247,25 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 			} else {
 				fmt.Fprintf(w, "$%d\r\n%s\r\n", len(val), val)
 			}
+
+		case "EXPIRE":
+			if len(args) != 3 {
+				fmt.Fprint(w, "-ERR wrong number of arguments for EXPIRE\r\n")
+				break
+			}
+			seconds, _ := strconv.ParseInt(args[2], 10, 64)
+			if store.Expire(username, args[1], seconds) {
+				fmt.Fprint(w, ":1\r\n")
+			} else {
+				fmt.Fprint(w, ":0\r\n")
+			}
+
+		case "TTL":
+			if len(args) != 2 {
+				fmt.Fprint(w, "-ERR wrong number of arguments for TTL\r\n")
+				break
+			}
+			fmt.Fprintf(w, ":%d\r\n", store.TTL(username, args[1]))
 
 		// --- unknown command ---
 		default:

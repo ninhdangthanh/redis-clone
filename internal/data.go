@@ -1,6 +1,9 @@
 package internal
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type ValueType int
 
@@ -12,16 +15,17 @@ const (
 )
 
 type Value struct {
-	Type ValueType
-	Str  []byte
-	List [][]byte
-	Set  map[string]struct{}
-	Hash map[string][]byte
+	Type      ValueType
+	Str       []byte
+	List      [][]byte
+	Set       map[string]struct{}
+	Hash      map[string][]byte
+	ExpiresAt int64
 }
 
 type Store struct {
 	mu   sync.RWMutex
-	data map[string]map[string]*Value
+	data map[string]map[string]*Value // user -> key -> Value
 }
 
 func NewStore() *Store {
@@ -37,19 +41,34 @@ func (s *Store) getUserData(user string) map[string]*Value {
 	return s.data[user]
 }
 
-func (s *Store) Set(user, key string, val []byte) {
+func (s *Store) Set(user, key string, val []byte, ttlMs int64) {
 	ud := s.getUserData(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ud[key] = &Value{Type: StringType, Str: val}
+
+	v := &Value{Type: StringType, Str: val}
+	if ttlMs > 0 {
+		v.ExpiresAt = time.Now().UnixMilli() + ttlMs
+	}
+	ud[key] = v
 }
 
 func (s *Store) Get(user, key string) ([]byte, bool) {
 	ud := s.getUserData(user)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	v, ok := ud[key]
-	if !ok || v.Type != StringType {
+	if !ok {
+		return nil, false
+	}
+
+	if v.ExpiresAt > 0 && time.Now().UnixMilli() >= v.ExpiresAt {
+		delete(ud, key)
+		return nil, false
+	}
+
+	if v.Type != StringType {
 		return nil, false
 	}
 	return v.Str, true
@@ -190,4 +209,62 @@ func (s *Store) HGet(user, key, field string) ([]byte, bool) {
 
 	val, exists := v.Hash[field]
 	return val, exists
+}
+
+func (s *Store) isExpired(ud map[string]*Value, key string) bool {
+	v, ok := ud[key]
+	if !ok || v.ExpiresAt == 0 {
+		return false
+	}
+	now := time.Now().UnixMilli()
+	if now >= v.ExpiresAt {
+		delete(ud, key)
+		return true
+	}
+	return false
+}
+
+func (s *Store) Expire(user, key string, seconds int64) bool {
+	ud := s.getUserData(user)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := ud[key]
+	if !ok {
+		return false
+	}
+	v.ExpiresAt = time.Now().UnixMilli() + seconds*1000
+	return true
+}
+
+func (s *Store) TTL(user, key string) int64 {
+	ud := s.getUserData(user)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := ud[key]
+	if !ok || v.ExpiresAt == 0 {
+		return -1
+	}
+	ttl := v.ExpiresAt - time.Now().UnixMilli()
+	if ttl < 0 {
+		return -2
+	}
+	return ttl / 1000
+}
+
+func (s *Store) StartTTLChecker(interval time.Duration) {
+	go func() {
+		for {
+			time.Sleep(interval)
+			now := time.Now().UnixMilli()
+			s.mu.Lock()
+			for _, ud := range s.data {
+				for key, val := range ud {
+					if val.ExpiresAt > 0 && now >= val.ExpiresAt {
+						delete(ud, key)
+					}
+				}
+			}
+			s.mu.Unlock()
+		}
+	}()
 }
