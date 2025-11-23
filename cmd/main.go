@@ -73,6 +73,11 @@ func handleConn(conn net.Conn, store *internal.Store, accounts *internal.Account
 				}
 			}
 
+		case "QUIT":
+			fmt.Fprint(w, "+OK\r\n")
+			w.Flush()
+			return
+
 		case "SET":
 			if !authenticated {
 				fmt.Fprint(w, "-NOAUTH Authentication required\r\n")
