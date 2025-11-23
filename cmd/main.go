@@ -7,6 +7,7 @@ import (
 	"redis-clone/internal"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func handleConn(conn net.Conn, store *internal.Store, accounts *internal.AccountStore) {
@@ -286,8 +287,11 @@ func main() {
 	accounts := internal.NewAccountStore()
 
 	accounts.AddUser("admin", "admin")
+	accounts.AddUser("ninh", "ninh")
 	accounts.AddUser("dev", "dev")
-	accounts.AddUser("sale", "sale")
+	accounts.AddUser("ba", "ba")
+
+	store.StartTTLChecker(time.Second)
 
 	for {
 		conn, err := ln.Accept()

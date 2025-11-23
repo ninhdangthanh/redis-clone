@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -257,9 +258,10 @@ func (s *Store) StartTTLChecker(interval time.Duration) {
 			time.Sleep(interval)
 			now := time.Now().UnixMilli()
 			s.mu.Lock()
-			for _, ud := range s.data {
+			for user, ud := range s.data {
 				for key, val := range ud {
 					if val.ExpiresAt > 0 && now >= val.ExpiresAt {
+						fmt.Printf("User '%s' key '%s' expired at %d\n", user, key, now)
 						delete(ud, key)
 					}
 				}
