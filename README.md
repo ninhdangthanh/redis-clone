@@ -46,8 +46,6 @@ This document outlines a complete, ordered, and practical roadmap for building a
 - Support expiration commands:
   - `EXPIRE`
   - `TTL`
-  - `PEXPIRE`
-  - (Optional) `GETEX`
 - **Passive expiration**: check key expiry on access.
 - **Active expiration**: background goroutine scanning expired keys.
 
