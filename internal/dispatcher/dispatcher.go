@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-func Dispatch(ctx *command.CommandContext, args []string) {
+func Dispatch(ctx *command.CommandContext, args []string) bool {
 	if len(args) == 0 {
 		ctx.Writer.WriteError("no command provided")
-		return
+		return false
 	}
 
 	cmd := strings.ToUpper(args[0])
@@ -46,4 +46,6 @@ func Dispatch(ctx *command.CommandContext, args []string) {
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown command '%s'", cmd))
 	}
+
+	return true
 }
