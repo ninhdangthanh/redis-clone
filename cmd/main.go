@@ -77,34 +77,23 @@ func handleConn(conn net.Conn, store *store.Store, aof *aof.AOF) {
 	}
 }
 
-func main() {
-	aof, err := aof.Open("appendonly.aof", aof.FsyncEverySec)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to open AOF: %v", err))
-	}
-	defer func() {
-		if err := aof.Close(); err != nil {
-			fmt.Printf("Error closing AOF: %v\n", err)
-		}
-	}()
-
-	store := store.NewStore()
-
-	store.StartTTLChecker(time.Second)
-
+func ReplayAOF(store *store.Store, aofFile *aof.AOF) error {
 	fmt.Println("Replaying AOF to restore state...")
-	if err := aof.Replay(func(args []string) error {
+
+	return aofFile.Replay(func(args []string) error {
 		if len(args) == 0 {
 			return nil
 		}
 
 		cmd := strings.ToUpper(args[0])
-		if !aof.ShouldPersistCommand(cmd) {
+		if !aofFile.ShouldPersistCommand(cmd) {
 			return nil
 		}
 
+		silentWriter := command.NewRespWriter(bufio.NewWriter(io.Discard))
+
 		tempCtx := &command.CommandContext{
-			Writer:        command.NewRespWriter(bufio.NewWriter(io.Discard)),
+			Writer:        silentWriter,
 			Store:         store,
 			Authenticated: true,
 		}
@@ -116,7 +105,24 @@ func main() {
 
 		fmt.Printf("Replayed command: %s\n", cmd)
 		return nil
-	}); err != nil {
+	})
+}
+
+func main() {
+	aofFile, err := aof.Open("appendonly.aof", aof.FsyncEverySec)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to open AOF: %v", err))
+	}
+	defer func() {
+		if err := aofFile.Close(); err != nil {
+			fmt.Printf("Error closing AOF: %v\n", err)
+		}
+	}()
+
+	store := store.NewStore()
+	store.StartTTLChecker(time.Second)
+
+	if err := ReplayAOF(store, aofFile); err != nil {
 		fmt.Printf("AOF replay error: %v\n", err)
 	} else {
 		fmt.Println("AOF replay completed successfully")
@@ -136,6 +142,6 @@ func main() {
 			fmt.Printf("Connection error: %v\n", err)
 			continue
 		}
-		go handleConn(conn, store, aof)
+		go handleConn(conn, store, aofFile)
 	}
 }
