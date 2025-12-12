@@ -61,7 +61,7 @@ func HandleSet(ctx *CommandContext, args []string) {
 		}
 	}
 
-	ctx.Store.Set(ctx.Username, key, val, ttlMs)
+	ctx.Store.Set(key, val, ttlMs)
 	ctx.Writer.WriteSimpleString("OK")
 }
 
@@ -72,7 +72,7 @@ func HandleGet(ctx *CommandContext, args []string) {
 	}
 
 	key := args[1]
-	val, ok := ctx.Store.Get(ctx.Username, key)
+	val, ok := ctx.Store.Get(key)
 
 	if !ok {
 		ctx.Writer.WriteNull()
@@ -89,7 +89,7 @@ func HandleDel(ctx *CommandContext, args []string) {
 	}
 
 	keys := args[1:]
-	deleted := ctx.Store.Del(ctx.Username, keys)
+	deleted := ctx.Store.Del(keys)
 
 	ctx.Writer.WriteInteger(int64(deleted))
 }

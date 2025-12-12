@@ -11,6 +11,6 @@ func HandleTTLCommands(ctx *CommandContext, args []string) {
 		return
 	}
 
-	ttl := ctx.Store.TTL(ctx.Username, args[1])
+	ttl := ctx.Store.TTL(args[1])
 	ctx.Writer.WriteInteger(int64(ttl))
 }

@@ -32,10 +32,10 @@ func handleLPush(ctx *CommandContext, args []string) {
 
 	key := args[1]
 	for _, v := range args[2:] {
-		ctx.Store.LPush(ctx.Username, key, []byte(v))
+		ctx.Store.LPush(key, []byte(v))
 	}
 
-	newLen := len(ctx.Store.LRange(ctx.Username, key, 0, -1))
+	newLen := len(ctx.Store.LRange(key, 0, -1))
 	ctx.Writer.WriteInteger(int64(newLen))
 }
 
@@ -47,10 +47,10 @@ func handleRPush(ctx *CommandContext, args []string) {
 
 	key := args[1]
 	for _, v := range args[2:] {
-		ctx.Store.RPush(ctx.Username, key, []byte(v))
+		ctx.Store.RPush(key, []byte(v))
 	}
 
-	newLen := len(ctx.Store.LRange(ctx.Username, key, 0, -1))
+	newLen := len(ctx.Store.LRange(key, 0, -1))
 	ctx.Writer.WriteInteger(int64(newLen))
 }
 
@@ -64,7 +64,7 @@ func handleLRange(ctx *CommandContext, args []string) {
 	start, _ := strconv.Atoi(args[2])
 	stop, _ := strconv.Atoi(args[3])
 
-	values := ctx.Store.LRange(ctx.Username, key, start, stop)
+	values := ctx.Store.LRange(key, start, stop)
 
 	ctx.Writer.WriteArrayHeader(len(values))
 	for _, v := range values {

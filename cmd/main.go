@@ -3,10 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"redis-clone/internal"
 	"redis-clone/internal/aof"
-	"redis-clone/internal/auth"
 	"redis-clone/internal/command"
 	"redis-clone/internal/dispatcher"
 	"redis-clone/internal/store"
@@ -20,7 +20,7 @@ type AOFCommandContext struct {
 	Success bool
 }
 
-func handleConn(conn net.Conn, store *store.Store, accounts *auth.AccountStore, aof *aof.AOF) {
+func handleConn(conn net.Conn, store *store.Store, aof *aof.AOF) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -29,8 +29,7 @@ func handleConn(conn net.Conn, store *store.Store, accounts *auth.AccountStore, 
 		CommandContext: &command.CommandContext{
 			Writer:        command.NewRespWriter(w),
 			Store:         store,
-			Accounts:      accounts,
-			Authenticated: false,
+			Authenticated: true, // TODO: this is temporary, implement AUTH later
 		},
 		Success: false,
 	}
@@ -90,12 +89,6 @@ func main() {
 	}()
 
 	store := store.NewStore()
-	accounts := auth.NewAccountStore()
-
-	accounts.AddUser("admin", "admin")
-	accounts.AddUser("ninh", "ninh")
-	accounts.AddUser("dev", "dev")
-	accounts.AddUser("ba", "ba")
 
 	store.StartTTLChecker(time.Second)
 
@@ -111,9 +104,8 @@ func main() {
 		}
 
 		tempCtx := &command.CommandContext{
-			Writer:        command.NewRespWriter(&bufio.Writer{}),
+			Writer:        command.NewRespWriter(bufio.NewWriter(io.Discard)),
 			Store:         store,
-			Accounts:      accounts,
 			Authenticated: true,
 		}
 
@@ -144,6 +136,6 @@ func main() {
 			fmt.Printf("Connection error: %v\n", err)
 			continue
 		}
-		go handleConn(conn, store, accounts, aof)
+		go handleConn(conn, store, aof)
 	}
 }

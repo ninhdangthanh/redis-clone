@@ -31,7 +31,7 @@ func handleSAdd(ctx *CommandContext, args []string) {
 	added := 0
 
 	for _, member := range args[2:] {
-		if ctx.Store.SAdd(ctx.Username, key, []byte(member)) {
+		if ctx.Store.SAdd(key, []byte(member)) {
 			added++
 		}
 	}
@@ -46,7 +46,7 @@ func handleSMembers(ctx *CommandContext, args []string) {
 	}
 
 	key := args[1]
-	members := ctx.Store.SMembers(ctx.Username, key)
+	members := ctx.Store.SMembers(key)
 
 	ctx.Writer.WriteArrayHeader(len(members))
 	for _, m := range members {

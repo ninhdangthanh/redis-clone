@@ -26,24 +26,14 @@ type Value struct {
 
 type Store struct {
 	mu   sync.RWMutex
-	data map[string]map[string]*Value // user -> key -> Value
+	data map[string]*Value // key -> Value
 }
 
 func NewStore() *Store {
-	return &Store{data: make(map[string]map[string]*Value)}
+	return &Store{data: make(map[string]*Value)}
 }
 
-func (s *Store) getUserData(user string) map[string]*Value {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.data[user]; !ok {
-		s.data[user] = make(map[string]*Value)
-	}
-	return s.data[user]
-}
-
-func (s *Store) Set(user, key string, val []byte, ttlMs int64) {
-	ud := s.getUserData(user)
+func (s *Store) Set(key string, val []byte, ttlMs int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -51,21 +41,20 @@ func (s *Store) Set(user, key string, val []byte, ttlMs int64) {
 	if ttlMs > 0 {
 		v.ExpiresAt = time.Now().UnixMilli() + ttlMs
 	}
-	ud[key] = v
+	s.data[key] = v
 }
 
-func (s *Store) Get(user, key string) ([]byte, bool) {
-	ud := s.getUserData(user)
+func (s *Store) Get(key string) ([]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		return nil, false
 	}
 
 	if v.ExpiresAt > 0 && time.Now().UnixMilli() >= v.ExpiresAt {
-		delete(ud, key)
+		delete(s.data, key)
 		return nil, false
 	}
 
@@ -75,30 +64,28 @@ func (s *Store) Get(user, key string) ([]byte, bool) {
 	return v.Str, true
 }
 
-func (s *Store) Del(user string, keys []string) int {
-	ud := s.getUserData(user)
+func (s *Store) Del(keys []string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	deleted := 0
 	for _, key := range keys {
-		if _, ok := ud[key]; ok {
-			delete(ud, key)
+		if _, ok := s.data[key]; ok {
+			delete(s.data, key)
 			deleted++
 		}
 	}
 	return deleted
 }
 
-func (s *Store) LPush(user, key string, val []byte) {
-	ud := s.getUserData(user)
+func (s *Store) LPush(key string, val []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		v = &Value{Type: ListType}
-		ud[key] = v
+		s.data[key] = v
 	}
 	if v.Type != ListType {
 		return
@@ -107,15 +94,14 @@ func (s *Store) LPush(user, key string, val []byte) {
 	v.List = append([][]byte{val}, v.List...)
 }
 
-func (s *Store) RPush(user, key string, val []byte) {
-	ud := s.getUserData(user)
+func (s *Store) RPush(key string, val []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		v = &Value{Type: ListType}
-		ud[key] = v
+		s.data[key] = v
 	}
 	if v.Type != ListType {
 		return
@@ -124,12 +110,11 @@ func (s *Store) RPush(user, key string, val []byte) {
 	v.List = append(v.List, val)
 }
 
-func (s *Store) LRange(user, key string, start, stop int) [][]byte {
-	ud := s.getUserData(user)
+func (s *Store) LRange(key string, start, stop int) [][]byte {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok || v.Type != ListType {
 		return nil
 	}
@@ -154,15 +139,14 @@ func (s *Store) LRange(user, key string, start, stop int) [][]byte {
 	return v.List[start : stop+1]
 }
 
-func (s *Store) SAdd(user, key string, val []byte) bool {
-	ud := s.getUserData(user)
+func (s *Store) SAdd(key string, val []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		v = &Value{Type: SetType, Set: make(map[string]struct{})}
-		ud[key] = v
+		s.data[key] = v
 	}
 	if v.Type != SetType {
 		return false
@@ -173,12 +157,11 @@ func (s *Store) SAdd(user, key string, val []byte) bool {
 	return !exists
 }
 
-func (s *Store) SMembers(user, key string) [][]byte {
-	ud := s.getUserData(user)
+func (s *Store) SMembers(key string) [][]byte {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok || v.Type != SetType {
 		return nil
 	}
@@ -190,15 +173,14 @@ func (s *Store) SMembers(user, key string) [][]byte {
 	return members
 }
 
-func (s *Store) HSet(user, key, field string, val []byte) int {
-	ud := s.getUserData(user)
+func (s *Store) HSet(key, field string, val []byte) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		v = &Value{Type: HashType, Hash: make(map[string][]byte)}
-		ud[key] = v
+		s.data[key] = v
 	}
 	if v.Type != HashType {
 		return 0
@@ -213,12 +195,11 @@ func (s *Store) HSet(user, key, field string, val []byte) int {
 	return 1
 }
 
-func (s *Store) HGet(user, key, field string) ([]byte, bool) {
-	ud := s.getUserData(user)
+func (s *Store) HGet(key, field string) ([]byte, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok || v.Type != HashType {
 		return nil, false
 	}
@@ -227,24 +208,23 @@ func (s *Store) HGet(user, key, field string) ([]byte, bool) {
 	return val, exists
 }
 
-func (s *Store) isExpired(ud map[string]*Value, key string) bool {
-	v, ok := ud[key]
+func (s *Store) isExpired(data map[string]*Value, key string) bool {
+	v, ok := data[key]
 	if !ok || v.ExpiresAt == 0 {
 		return false
 	}
 	now := time.Now().UnixMilli()
 	if now >= v.ExpiresAt {
-		delete(ud, key)
+		delete(data, key)
 		return true
 	}
 	return false
 }
 
-func (s *Store) Expire(user, key string, seconds int64) bool {
-	ud := s.getUserData(user)
+func (s *Store) Expire(key string, seconds int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok {
 		return false
 	}
@@ -252,11 +232,10 @@ func (s *Store) Expire(user, key string, seconds int64) bool {
 	return true
 }
 
-func (s *Store) TTL(user, key string) int64 {
-	ud := s.getUserData(user)
+func (s *Store) TTL(key string) int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	v, ok := ud[key]
+	v, ok := s.data[key]
 	if !ok || v.ExpiresAt == 0 {
 		return -1
 	}
@@ -273,12 +252,10 @@ func (s *Store) StartTTLChecker(interval time.Duration) {
 			time.Sleep(interval)
 			now := time.Now().UnixMilli()
 			s.mu.Lock()
-			for user, ud := range s.data {
-				for key, val := range ud {
-					if val.ExpiresAt > 0 && now >= val.ExpiresAt {
-						fmt.Printf("User '%s' key '%s' expired at %d\n", user, key, now)
-						delete(ud, key)
-					}
+			for key, val := range s.data {
+				if val.ExpiresAt > 0 && now >= val.ExpiresAt {
+					fmt.Printf("Key '%s' expired at %d\n", key, now)
+					delete(s.data, key)
 				}
 			}
 			s.mu.Unlock()

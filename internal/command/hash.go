@@ -31,7 +31,7 @@ func handleHSet(ctx *CommandContext, args []string) {
 	field := args[2]
 	value := []byte(args[3])
 
-	isNew := ctx.Store.HSet(ctx.Username, key, field, value)
+	isNew := ctx.Store.HSet(key, field, value)
 	ctx.Writer.WriteInteger(int64(isNew)) // 1 if new field, 0 if updated
 }
 
@@ -44,7 +44,7 @@ func handleHGet(ctx *CommandContext, args []string) {
 	key := args[1]
 	field := args[2]
 
-	val, ok := ctx.Store.HGet(ctx.Username, key, field)
+	val, ok := ctx.Store.HGet(key, field)
 	if !ok {
 		ctx.Writer.WriteNull()
 	} else {

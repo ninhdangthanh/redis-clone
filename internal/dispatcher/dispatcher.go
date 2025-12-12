@@ -22,9 +22,6 @@ func Dispatch(ctx *command.CommandContext, args []string) bool {
 	case "ECHO":
 		command.HandleEcho(ctx, args)
 
-	case "AUTH":
-		command.HandleAuth(ctx, args)
-
 	case "QUIT":
 		command.HandleQuit(ctx, args)
 
