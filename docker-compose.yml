@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  redis-clone:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: redis-clone
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./appendonly.aof:/app/appendonly.aof
+    restart: always
