@@ -131,9 +131,10 @@ This document outlines a complete, ordered, and practical roadmap for building a
 - Close all client connections cleanly.
 
 ## 12. Redis single thread
-Client A ----\
-Client B ----- > Redis event loop (1 thread) -> execute command
-Client C ----/
+Client A ---- \
+Client B ----- > Redis event loop (1 thread) -> execute command 
+
+Client C ---- /
 
 ---
 
