@@ -276,6 +276,7 @@ Read commands (`GET`, `TTL`, `PING`, etc.) are never written to the AOF.
 ## Phase 9 · Pub/Sub ❌
 
 **Status:** Not yet implemented.
+#### thử cả Observe design pattern và go routine, channel
 
 **Plan:**
 - Maintain a `map[channel][]subscriber` where each subscriber is a `chan []byte`.

@@ -107,6 +107,7 @@ This document outlines a complete, ordered, and practical roadmap for building a
   - `PUBLISH`
 - Broadcast messages to subscribers.
 - Handle blocking connections.
+#### thử cả Observe design pattern và go routine, channel
 
 ---
 
