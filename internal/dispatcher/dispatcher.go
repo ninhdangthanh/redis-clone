@@ -37,7 +37,7 @@ func Dispatch(ctx *command.CommandContext, args []string) bool {
 	case "HSET", "HGET":
 		return command.HandleHashCommands(ctx, args)
 
-	case "EXPIRE", "TTL":
+	case "EXPIRE", "PEXPIREAT", "TTL":
 		return command.HandleTTLCommands(ctx, args)
 
 	default:

@@ -255,10 +255,6 @@ Read commands (`GET`, `TTL`, `PING`, etc.) are never written to the AOF.
 
 `ReplayAOF` in `main.go` replays the log before the server starts accepting connections. It creates a silent `CommandContext` (writing to `io.Discard`) and re-dispatches every persisted command through the normal dispatcher, which rebuilds in-memory state.
 
-### AOF Rewrite / RDB Snapshot
-
-> ❌ **Not yet implemented.** AOF rewrite (compaction) and RDB snapshotting are planned future phases.
-
 ---
 
 ## Phase 8 · Eviction & Memory Management ❌

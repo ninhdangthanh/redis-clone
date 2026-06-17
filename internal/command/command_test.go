@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"bytes"
+	"strconv"
 	"testing"
 	"time"
 
@@ -95,6 +96,41 @@ func TestSetWithPXExpires(t *testing.T) {
 	}
 	if got := buf.String(); got != "$-1\r\n" {
 		t.Fatalf("expired GET response = %q, want null bulk", got)
+	}
+}
+
+func TestSetWithPXATUsesAbsoluteExpiry(t *testing.T) {
+	ctx, buf := newCommandTestContext()
+	expiresAt := time.Now().Add(1500 * time.Millisecond).UnixMilli()
+
+	if !HandleSet(ctx, []string{"SET", "temp", "value", "PXAT", strconv.FormatInt(expiresAt, 10)}) {
+		t.Fatal("SET PXAT returned false")
+	}
+	if got := buf.String(); got != "+OK\r\n" {
+		t.Fatalf("SET PXAT response = %q, want +OK", got)
+	}
+
+	ttl := ctx.Store.TTL("temp")
+	if ttl < 0 || ttl > 1 {
+		t.Fatalf("SET PXAT TTL = %d, want between 0 and 1 second", ttl)
+	}
+}
+
+func TestPExpireAtCommand(t *testing.T) {
+	ctx, buf := newCommandTestContext()
+	ctx.Store.Set("temp", []byte("value"), 0)
+	expiresAt := time.Now().Add(1500 * time.Millisecond).UnixMilli()
+
+	if !HandleTTLCommands(ctx, []string{"PEXPIREAT", "temp", strconv.FormatInt(expiresAt, 10)}) {
+		t.Fatal("PEXPIREAT returned false")
+	}
+	if got := buf.String(); got != ":1\r\n" {
+		t.Fatalf("PEXPIREAT response = %q, want :1", got)
+	}
+
+	ttl := ctx.Store.TTL("temp")
+	if ttl < 0 || ttl > 1 {
+		t.Fatalf("PEXPIREAT TTL = %d, want between 0 and 1 second", ttl)
 	}
 }
 

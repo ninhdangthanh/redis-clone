@@ -20,7 +20,7 @@ type AOFCommandContext struct {
 	Success bool
 }
 
-func handleConn(conn net.Conn, store *store.Store, aof *aof.AOF) {
+func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -68,8 +68,8 @@ func handleConn(conn net.Conn, store *store.Store, aof *aof.AOF) {
 
 		commandContext.Success = dispatcher.Dispatch(commandContext.CommandContext, args)
 
-		if commandContext.Success && aof.ShouldPersistCommand(cmd) {
-			if err := aof.Append(args); err != nil {
+		if commandContext.Success && aofFile.ShouldPersistCommand(cmd) {
+			if err := aofFile.Append(aof.ArgsForAppend(args, time.Now())); err != nil {
 				fmt.Printf("AOF append error: %v\n", err)
 			}
 		}

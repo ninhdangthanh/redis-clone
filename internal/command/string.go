@@ -56,6 +56,16 @@ func HandleSet(ctx *CommandContext, args []string) bool {
 			}
 			ttlMs = ms
 
+		case "PXAT":
+			expiresAtMs, err := strconv.ParseInt(exp, 10, 64)
+			if err != nil || expiresAtMs <= 0 {
+				ctx.Writer.WriteError("invalid expire time")
+				return false
+			}
+			ctx.Store.SetAt(key, val, expiresAtMs)
+			ctx.Writer.WriteSimpleString("OK")
+			return true
+
 		default:
 			ctx.Writer.WriteError("syntax error")
 			return false

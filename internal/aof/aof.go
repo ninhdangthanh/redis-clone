@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -122,6 +123,53 @@ func (a *AOF) Append(args []string) error {
 	return nil
 }
 
+func ArgsForAppend(args []string, now time.Time) []string {
+	if len(args) == 0 {
+		return nil
+	}
+
+	out := append([]string(nil), args...)
+	cmd := strings.ToUpper(out[0])
+	out[0] = cmd
+
+	switch cmd {
+	case "SET":
+		if len(out) != 5 {
+			return out
+		}
+
+		flag := strings.ToUpper(out[3])
+		exp, err := strconv.ParseInt(out[4], 10, 64)
+		if err != nil {
+			return out
+		}
+
+		switch flag {
+		case "EX":
+			out[3] = "PXAT"
+			out[4] = strconv.FormatInt(now.UnixMilli()+exp*1000, 10)
+		case "PX":
+			out[3] = "PXAT"
+			out[4] = strconv.FormatInt(now.UnixMilli()+exp, 10)
+		case "PXAT":
+			out[3] = "PXAT"
+		}
+	case "EXPIRE":
+		if len(out) != 3 {
+			return out
+		}
+
+		seconds, err := strconv.ParseInt(out[2], 10, 64)
+		if err != nil {
+			return out
+		}
+		out[0] = "PEXPIREAT"
+		out[2] = strconv.FormatInt(now.UnixMilli()+seconds*1000, 10)
+	}
+
+	return out
+}
+
 // Replay reads the AOF file and yields parsed commands one by one via the provided callback.
 // The callback receives a slice of arguments for each command and should apply them to state.
 func (a *AOF) Replay(cb func(args []string) error) error {
@@ -131,6 +179,9 @@ func (a *AOF) Replay(cb func(args []string) error) error {
 	// Seek to beginning and read
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := a.w.Flush(); err != nil {
+		return err
+	}
 	if _, err := a.f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -192,13 +243,14 @@ func (a *AOF) Replay(cb func(args []string) error) error {
 
 func (a *AOF) ShouldPersistCommand(cmd string) bool {
 	writeCommands := map[string]bool{
-		"SET":    true,
-		"DEL":    true,
-		"LPUSH":  true,
-		"RPUSH":  true,
-		"SADD":   true,
-		"HSET":   true,
-		"EXPIRE": true,
+		"SET":       true,
+		"DEL":       true,
+		"LPUSH":     true,
+		"RPUSH":     true,
+		"SADD":      true,
+		"HSET":      true,
+		"EXPIRE":    true,
+		"PEXPIREAT": true,
 	}
-	return writeCommands[cmd]
+	return writeCommands[strings.ToUpper(cmd)]
 }

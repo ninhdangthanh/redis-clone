@@ -43,6 +43,17 @@ func (s *Store) Set(key string, val []byte, ttlMs int64) {
 	s.data[key] = v
 }
 
+func (s *Store) SetAt(key string, val []byte, expiresAtMs int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v := &Value{Type: StringType, Str: append([]byte(nil), val...)}
+	if expiresAtMs > 0 {
+		v.ExpiresAt = expiresAtMs
+	}
+	s.data[key] = v
+}
+
 func (s *Store) Get(key string) ([]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,6 +288,17 @@ func (s *Store) Expire(key string, seconds int64) bool {
 		return false
 	}
 	v.ExpiresAt = time.Now().UnixMilli() + seconds*1000
+	return true
+}
+
+func (s *Store) ExpireAt(key string, expiresAtMs int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.data[key]
+	if !ok || s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
+		return false
+	}
+	v.ExpiresAt = expiresAtMs
 	return true
 }
 

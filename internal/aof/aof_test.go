@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseMode(t *testing.T) {
@@ -60,6 +61,76 @@ func TestAppendAndReplay(t *testing.T) {
 	}
 }
 
+func TestReplayFlushesPendingEverySecWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.aof")
+	a, err := Open(path, FsyncEverySec)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer a.Close()
+
+	if err := a.Append([]string{"SET", "key", "value"}); err != nil {
+		t.Fatalf("Append returned error: %v", err)
+	}
+
+	var replayed [][]string
+	if err := a.Replay(func(args []string) error {
+		replayed = append(replayed, args)
+		return nil
+	}); err != nil {
+		t.Fatalf("Replay returned error: %v", err)
+	}
+
+	want := [][]string{{"SET", "key", "value"}}
+	if !reflect.DeepEqual(replayed, want) {
+		t.Fatalf("replayed commands = %#v, want %#v", replayed, want)
+	}
+}
+
+func TestArgsForAppendConvertsRelativeExpiries(t *testing.T) {
+	now := time.UnixMilli(1_000_000)
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "set ex",
+			args: []string{"SET", "key", "value", "EX", "10"},
+			want: []string{"SET", "key", "value", "PXAT", "1010000"},
+		},
+		{
+			name: "set px",
+			args: []string{"set", "key", "value", "px", "25"},
+			want: []string{"SET", "key", "value", "PXAT", "1000025"},
+		},
+		{
+			name: "expire",
+			args: []string{"EXPIRE", "key", "10"},
+			want: []string{"PEXPIREAT", "key", "1010000"},
+		},
+		{
+			name: "plain set",
+			args: []string{"SET", "key", "value"},
+			want: []string{"SET", "key", "value"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := append([]string(nil), tt.args...)
+			got := ArgsForAppend(tt.args, now)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ArgsForAppend(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+			if !reflect.DeepEqual(tt.args, original) {
+				t.Fatalf("ArgsForAppend mutated input to %v, want %v", tt.args, original)
+			}
+		})
+	}
+}
+
 func TestReplayStopsOnCallbackError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "appendonly.aof")
 	a, err := Open(path, FsyncNever)
@@ -101,7 +172,7 @@ func TestReplayRejectsInvalidFormat(t *testing.T) {
 func TestShouldPersistCommand(t *testing.T) {
 	a := &AOF{}
 
-	for _, cmd := range []string{"SET", "DEL", "LPUSH", "RPUSH", "SADD", "HSET", "EXPIRE"} {
+	for _, cmd := range []string{"SET", "DEL", "LPUSH", "RPUSH", "SADD", "HSET", "EXPIRE", "PEXPIREAT"} {
 		if !a.ShouldPersistCommand(cmd) {
 			t.Fatalf("ShouldPersistCommand(%q) = false, want true", cmd)
 		}

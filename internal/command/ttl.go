@@ -14,6 +14,8 @@ func HandleTTLCommands(ctx *CommandContext, args []string) bool {
 	switch strings.ToUpper(args[0]) {
 	case "EXPIRE":
 		return handleExpire(ctx, args)
+	case "PEXPIREAT":
+		return handlePExpireAt(ctx, args)
 	case "TTL":
 		return handleTTL(ctx, args)
 	default:
@@ -35,6 +37,26 @@ func handleExpire(ctx *CommandContext, args []string) bool {
 	}
 
 	if ctx.Store.Expire(args[1], seconds) {
+		ctx.Writer.WriteInteger(1)
+	} else {
+		ctx.Writer.WriteInteger(0)
+	}
+	return true
+}
+
+func handlePExpireAt(ctx *CommandContext, args []string) bool {
+	if len(args) != 3 {
+		ctx.Writer.WriteError("wrong number of arguments for PEXPIREAT")
+		return false
+	}
+
+	expiresAtMs, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil || expiresAtMs < 0 {
+		ctx.Writer.WriteError("invalid expire time")
+		return false
+	}
+
+	if ctx.Store.ExpireAt(args[1], expiresAtMs) {
 		ctx.Writer.WriteInteger(1)
 	} else {
 		ctx.Writer.WriteInteger(0)
