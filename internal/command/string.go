@@ -6,28 +6,29 @@ import (
 	"strings"
 )
 
-func HandleStringCommands(ctx *CommandContext, args []string) {
+func HandleStringCommands(ctx *CommandContext, args []string) bool {
 	if !ctx.Authenticated {
 		ctx.Writer.WriteError("NOAUTH Authentication required")
-		return
+		return false
 	}
 
 	switch strings.ToUpper(args[0]) {
 	case "SET":
-		HandleSet(ctx, args)
+		return HandleSet(ctx, args)
 	case "GET":
-		HandleGet(ctx, args)
+		return HandleGet(ctx, args)
 	case "DEL":
-		HandleDel(ctx, args)
+		return HandleDel(ctx, args)
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown string command '%s'", args[0]))
+		return false
 	}
 }
 
-func HandleSet(ctx *CommandContext, args []string) {
+func HandleSet(ctx *CommandContext, args []string) bool {
 	if len(args) != 3 && len(args) != 5 {
 		ctx.Writer.WriteError("wrong number of arguments for SET")
-		return
+		return false
 	}
 
 	key := args[1]
@@ -41,34 +42,35 @@ func HandleSet(ctx *CommandContext, args []string) {
 		switch flag {
 		case "EX":
 			sec, err := strconv.ParseInt(exp, 10, 64)
-			if err != nil || sec < 0 {
+			if err != nil || sec <= 0 {
 				ctx.Writer.WriteError("invalid expire time")
-				return
+				return false
 			}
 			ttlMs = sec * 1000
 
 		case "PX":
 			ms, err := strconv.ParseInt(exp, 10, 64)
-			if err != nil || ms < 0 {
+			if err != nil || ms <= 0 {
 				ctx.Writer.WriteError("invalid expire time")
-				return
+				return false
 			}
 			ttlMs = ms
 
 		default:
 			ctx.Writer.WriteError("syntax error")
-			return
+			return false
 		}
 	}
 
 	ctx.Store.Set(key, val, ttlMs)
 	ctx.Writer.WriteSimpleString("OK")
+	return true
 }
 
-func HandleGet(ctx *CommandContext, args []string) {
+func HandleGet(ctx *CommandContext, args []string) bool {
 	if len(args) != 2 {
 		ctx.Writer.WriteError("wrong number of arguments for GET")
-		return
+		return false
 	}
 
 	key := args[1]
@@ -76,20 +78,22 @@ func HandleGet(ctx *CommandContext, args []string) {
 
 	if !ok {
 		ctx.Writer.WriteNull()
-		return
+		return true
 	}
 
 	ctx.Writer.WriteBulkString(val)
+	return true
 }
 
-func HandleDel(ctx *CommandContext, args []string) {
+func HandleDel(ctx *CommandContext, args []string) bool {
 	if len(args) < 2 {
 		ctx.Writer.WriteError("wrong number of arguments for DEL")
-		return
+		return false
 	}
 
 	keys := args[1:]
 	deleted := ctx.Store.Del(keys)
 
 	ctx.Writer.WriteInteger(int64(deleted))
+	return true
 }

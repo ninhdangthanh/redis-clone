@@ -6,68 +6,92 @@ import (
 	"strings"
 )
 
-func HandleListCommands(ctx *CommandContext, args []string) {
+func HandleListCommands(ctx *CommandContext, args []string) bool {
 	if !ctx.Authenticated {
 		ctx.Writer.WriteError("NOAUTH Authentication required")
-		return
+		return false
 	}
 
 	switch strings.ToUpper(args[0]) {
 	case "LPUSH":
-		handleLPush(ctx, args)
+		return handleLPush(ctx, args)
 	case "RPUSH":
-		handleRPush(ctx, args)
+		return handleRPush(ctx, args)
 	case "LRANGE":
-		handleLRange(ctx, args)
+		return handleLRange(ctx, args)
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown list command '%s'", args[0]))
+		return false
 	}
 }
 
-func handleLPush(ctx *CommandContext, args []string) {
+func handleLPush(ctx *CommandContext, args []string) bool {
 	if len(args) < 3 {
 		ctx.Writer.WriteError("wrong number of arguments for LPUSH")
-		return
+		return false
 	}
 
 	key := args[1]
+	values := make([][]byte, 0, len(args)-2)
 	for _, v := range args[2:] {
-		ctx.Store.LPush(key, []byte(v))
+		values = append(values, []byte(v))
 	}
-
-	newLen := len(ctx.Store.LRange(key, 0, -1))
+	newLen, ok := ctx.Store.LPush(key, values...)
+	if !ok {
+		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return false
+	}
 	ctx.Writer.WriteInteger(int64(newLen))
+	return true
 }
 
-func handleRPush(ctx *CommandContext, args []string) {
+func handleRPush(ctx *CommandContext, args []string) bool {
 	if len(args) < 3 {
 		ctx.Writer.WriteError("wrong number of arguments for RPUSH")
-		return
+		return false
 	}
 
 	key := args[1]
+	values := make([][]byte, 0, len(args)-2)
 	for _, v := range args[2:] {
-		ctx.Store.RPush(key, []byte(v))
+		values = append(values, []byte(v))
 	}
-
-	newLen := len(ctx.Store.LRange(key, 0, -1))
+	newLen, ok := ctx.Store.RPush(key, values...)
+	if !ok {
+		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return false
+	}
 	ctx.Writer.WriteInteger(int64(newLen))
+	return true
 }
 
-func handleLRange(ctx *CommandContext, args []string) {
+func handleLRange(ctx *CommandContext, args []string) bool {
 	if len(args) != 4 {
 		ctx.Writer.WriteError("wrong number of arguments for LRANGE")
-		return
+		return false
 	}
 
 	key := args[1]
-	start, _ := strconv.Atoi(args[2])
-	stop, _ := strconv.Atoi(args[3])
+	start, err := strconv.Atoi(args[2])
+	if err != nil {
+		ctx.Writer.WriteError("value is not an integer or out of range")
+		return false
+	}
+	stop, err := strconv.Atoi(args[3])
+	if err != nil {
+		ctx.Writer.WriteError("value is not an integer or out of range")
+		return false
+	}
 
-	values := ctx.Store.LRange(key, start, stop)
+	values, ok := ctx.Store.LRange(key, start, stop)
+	if !ok {
+		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return false
+	}
 
 	ctx.Writer.WriteArrayHeader(len(values))
 	for _, v := range values {
 		ctx.Writer.WriteBulkString(v)
 	}
+	return true
 }

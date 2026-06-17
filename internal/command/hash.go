@@ -5,40 +5,46 @@ import (
 	"strings"
 )
 
-func HandleHashCommands(ctx *CommandContext, args []string) {
+func HandleHashCommands(ctx *CommandContext, args []string) bool {
 	if !ctx.Authenticated {
 		ctx.Writer.WriteError("NOAUTH Authentication required")
-		return
+		return false
 	}
 
 	switch strings.ToUpper(args[0]) {
 	case "HSET":
-		handleHSet(ctx, args)
+		return handleHSet(ctx, args)
 	case "HGET":
-		handleHGet(ctx, args)
+		return handleHGet(ctx, args)
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown hash command '%s'", args[0]))
+		return false
 	}
 }
 
-func handleHSet(ctx *CommandContext, args []string) {
+func handleHSet(ctx *CommandContext, args []string) bool {
 	if len(args) != 4 {
 		ctx.Writer.WriteError("wrong number of arguments for HSET")
-		return
+		return false
 	}
 
 	key := args[1]
 	field := args[2]
 	value := []byte(args[3])
 
-	isNew := ctx.Store.HSet(key, field, value)
+	isNew, ok := ctx.Store.HSet(key, field, value)
+	if !ok {
+		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return false
+	}
 	ctx.Writer.WriteInteger(int64(isNew)) // 1 if new field, 0 if updated
+	return true
 }
 
-func handleHGet(ctx *CommandContext, args []string) {
+func handleHGet(ctx *CommandContext, args []string) bool {
 	if len(args) != 3 {
 		ctx.Writer.WriteError("wrong number of arguments for HGET")
-		return
+		return false
 	}
 
 	key := args[1]
@@ -50,4 +56,5 @@ func handleHGet(ctx *CommandContext, args []string) {
 	} else {
 		ctx.Writer.WriteBulkString(val)
 	}
+	return true
 }

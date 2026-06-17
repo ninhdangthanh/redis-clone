@@ -45,7 +45,12 @@ func handleConn(conn net.Conn, store *store.Store, aof *aof.AOF) {
 			continue
 		}
 
-		n, _ := strconv.Atoi(line[1:])
+		n, err := strconv.Atoi(line[1:])
+		if err != nil || n <= 0 {
+			fmt.Fprint(w, "-ERR invalid RESP array length\r\n")
+			w.Flush()
+			continue
+		}
 		args := make([]string, 0, n)
 		for i := 0; i < n; i++ {
 			s, err := internal.ReadBulkString(r)

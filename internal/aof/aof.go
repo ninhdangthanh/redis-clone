@@ -109,12 +109,15 @@ func (a *AOF) Append(args []string) error {
 	if _, err := a.w.WriteString(b.String()); err != nil {
 		return err
 	}
-	if err := a.w.Flush(); err != nil {
-		return err
-	}
 
 	if a.mode == FsyncAlways {
+		if err := a.w.Flush(); err != nil {
+			return err
+		}
 		return a.f.Sync()
+	}
+	if a.mode == FsyncNever {
+		return a.w.Flush()
 	}
 	return nil
 }

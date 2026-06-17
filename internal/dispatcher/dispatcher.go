@@ -17,32 +17,31 @@ func Dispatch(ctx *command.CommandContext, args []string) bool {
 	switch cmd {
 
 	case "PING":
-		command.HandlePing(ctx, args)
+		return command.HandlePing(ctx, args)
 
 	case "ECHO":
-		command.HandleEcho(ctx, args)
+		return command.HandleEcho(ctx, args)
 
 	case "QUIT":
-		command.HandleQuit(ctx, args)
+		return command.HandleQuit(ctx, args)
 
 	case "SET", "GET", "DEL":
-		command.HandleStringCommands(ctx, args)
+		return command.HandleStringCommands(ctx, args)
 
 	case "LPUSH", "RPUSH", "LRANGE":
-		command.HandleListCommands(ctx, args)
+		return command.HandleListCommands(ctx, args)
 
 	case "SADD", "SMEMBERS":
-		command.HandleSetCommands(ctx, args)
+		return command.HandleSetCommands(ctx, args)
 
 	case "HSET", "HGET":
-		command.HandleHashCommands(ctx, args)
+		return command.HandleHashCommands(ctx, args)
 
 	case "EXPIRE", "TTL":
-		command.HandleTTLCommands(ctx, args)
+		return command.HandleTTLCommands(ctx, args)
 
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown command '%s'", cmd))
+		return false
 	}
-
-	return true
 }
