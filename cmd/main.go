@@ -114,6 +114,43 @@ func ReplayAOF(store *store.Store, aofFile *aof.AOF) error {
 	})
 }
 
+func loadEnvFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
 func storeConfigFromEnv() store.Config {
 	config := store.Config{
 		EvictionPolicy: store.ParseEvictionPolicy(os.Getenv("MAXMEMORY_POLICY")),
@@ -128,6 +165,10 @@ func storeConfigFromEnv() store.Config {
 }
 
 func main() {
+	if err := loadEnvFile(".env"); err != nil {
+		fmt.Printf("Error loading .env: %v\n", err)
+	}
+
 	aofFile, err := aof.Open("appendonly.aof", aof.FsyncEverySec)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to open AOF: %v", err))

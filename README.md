@@ -90,6 +90,9 @@ This document outlines a complete, ordered, and practical roadmap for building a
 ---
 
 ## 8. Eviction & Memory Management
+- Local defaults live in `.env`; start the server with `go run ./cmd`.
+- Shell variables override `.env` values, for example:
+  - `MAXMEMORY=2097152 MAXMEMORY_POLICY=noeviction go run ./cmd`
 - Configure memory limits with environment variables:
   - `MAXMEMORY=<bytes>`
   - `MAXMEMORY_POLICY=<policy>`
