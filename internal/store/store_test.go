@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -32,17 +33,17 @@ func TestExpiredKeyCanChangeType(t *testing.T) {
 	s.Set("key", []byte("value"), 1)
 	time.Sleep(2 * time.Millisecond)
 
-	added, ok := s.SAdd("key", []byte("member"))
-	if !ok || !added {
-		t.Fatalf("SAdd after string expiry = added %v ok %v, want true true", added, ok)
+	added, err := s.SAdd("key", []byte("member"))
+	if err != nil || !added {
+		t.Fatalf("SAdd after string expiry = added %v err %v, want true nil", added, err)
 	}
 }
 
 func TestListPushesReturnLengthAndWrongType(t *testing.T) {
 	s := NewStore()
 
-	if got, ok := s.LPush("list", []byte("a"), []byte("b")); !ok || got != 2 {
-		t.Fatalf("LPush length = %d ok = %v, want 2 true", got, ok)
+	if got, err := s.LPush("list", []byte("a"), []byte("b")); err != nil || got != 2 {
+		t.Fatalf("LPush length = %d err = %v, want 2 nil", got, err)
 	}
 
 	values, ok := s.LRange("list", 0, -1)
@@ -51,7 +52,7 @@ func TestListPushesReturnLengthAndWrongType(t *testing.T) {
 	}
 
 	s.Set("string", []byte("value"), 0)
-	if _, ok := s.RPush("string", []byte("x")); ok {
+	if _, err := s.RPush("string", []byte("x")); !errors.Is(err, ErrWrongType) {
 		t.Fatal("RPush on string key should report wrong type")
 	}
 }
@@ -76,8 +77,8 @@ func TestStringValuesAreCopied(t *testing.T) {
 
 func TestLRangeNormalizesBounds(t *testing.T) {
 	s := NewStore()
-	if _, ok := s.RPush("list", []byte("a"), []byte("b"), []byte("c")); !ok {
-		t.Fatal("RPush returned false")
+	if _, err := s.RPush("list", []byte("a"), []byte("b"), []byte("c")); err != nil {
+		t.Fatalf("RPush returned error: %v", err)
 	}
 
 	values, ok := s.LRange("list", -2, 99)
@@ -94,26 +95,26 @@ func TestLRangeNormalizesBounds(t *testing.T) {
 func TestSetAndHashOperations(t *testing.T) {
 	s := NewStore()
 
-	added, ok := s.SAdd("set", []byte("a"))
-	if !ok || !added {
-		t.Fatalf("first SAdd = added %v ok %v, want true true", added, ok)
+	added, err := s.SAdd("set", []byte("a"))
+	if err != nil || !added {
+		t.Fatalf("first SAdd = added %v err %v, want true nil", added, err)
 	}
-	added, ok = s.SAdd("set", []byte("a"))
-	if !ok || added {
-		t.Fatalf("duplicate SAdd = added %v ok %v, want false true", added, ok)
+	added, err = s.SAdd("set", []byte("a"))
+	if err != nil || added {
+		t.Fatalf("duplicate SAdd = added %v err %v, want false nil", added, err)
 	}
 	members, ok := s.SMembers("set")
 	if !ok || len(members) != 1 || string(members[0]) != "a" {
 		t.Fatalf("SMembers = %q ok = %v, want [a] true", members, ok)
 	}
 
-	created, ok := s.HSet("hash", "field", []byte("one"))
-	if !ok || created != 1 {
-		t.Fatalf("first HSet = %d ok = %v, want 1 true", created, ok)
+	created, err := s.HSet("hash", "field", []byte("one"))
+	if err != nil || created != 1 {
+		t.Fatalf("first HSet = %d err = %v, want 1 nil", created, err)
 	}
-	created, ok = s.HSet("hash", "field", []byte("two"))
-	if !ok || created != 0 {
-		t.Fatalf("update HSet = %d ok = %v, want 0 true", created, ok)
+	created, err = s.HSet("hash", "field", []byte("two"))
+	if err != nil || created != 0 {
+		t.Fatalf("update HSet = %d err = %v, want 0 nil", created, err)
 	}
 	val, ok := s.HGet("hash", "field")
 	if !ok || string(val) != "two" {
@@ -125,10 +126,110 @@ func TestWrongTypeForSetAndHash(t *testing.T) {
 	s := NewStore()
 	s.Set("key", []byte("value"), 0)
 
-	if _, ok := s.SAdd("key", []byte("member")); ok {
+	if _, err := s.SAdd("key", []byte("member")); !errors.Is(err, ErrWrongType) {
 		t.Fatal("SAdd on string key should report wrong type")
 	}
-	if _, ok := s.HSet("key", "field", []byte("value")); ok {
+	if _, err := s.HSet("key", "field", []byte("value")); !errors.Is(err, ErrWrongType) {
 		t.Fatal("HSet on string key should report wrong type")
+	}
+}
+
+func TestNoEvictionRejectsWritesOverMaxMemory(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 80, EvictionPolicy: PolicyNoEviction})
+
+	err := s.Set("too-big", []byte("this value is larger than the tiny configured memory limit"), 0)
+	if !errors.Is(err, ErrMaxMemory) {
+		t.Fatalf("SET over maxmemory err = %v, want ErrMaxMemory", err)
+	}
+	if s.Len() != 0 {
+		t.Fatalf("rejected write should be rolled back, len = %d", s.Len())
+	}
+}
+
+func TestAllKeysLRUEvictsLeastRecentlyUsedKey(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 160, EvictionPolicy: PolicyAllKeysLRU})
+
+	if err := s.Set("old", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set old: %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := s.Set("fresh", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set fresh: %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	if _, ok := s.Get("fresh"); !ok {
+		t.Fatal("fresh should be readable before eviction")
+	}
+	if err := s.Set("new", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set new: %v", err)
+	}
+
+	if _, ok := s.Get("old"); ok {
+		t.Fatal("old should have been evicted")
+	}
+	if _, ok := s.Get("fresh"); !ok {
+		t.Fatal("fresh should remain after LRU eviction")
+	}
+}
+
+func TestEvictionPolicyRejectsSingleValueThatCannotFit(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 90, EvictionPolicy: PolicyAllKeysLRU})
+
+	if err := s.Set("small", []byte("ok"), 0); err != nil {
+		t.Fatalf("set small: %v", err)
+	}
+	err := s.Set("huge", []byte("this value cannot fit even after every other key is evicted"), 0)
+	if !errors.Is(err, ErrMaxMemory) {
+		t.Fatalf("oversized SET err = %v, want ErrMaxMemory", err)
+	}
+	if _, ok := s.Get("huge"); ok {
+		t.Fatal("oversized key should not be written")
+	}
+}
+
+func TestAllKeysLFUEvictsLeastFrequentlyUsedKey(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 160, EvictionPolicy: PolicyAllKeysLFU})
+
+	if err := s.Set("rare", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set rare: %v", err)
+	}
+	if err := s.Set("often", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set often: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, ok := s.Get("often"); !ok {
+			t.Fatal("often should be readable before eviction")
+		}
+	}
+	if err := s.Set("new", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set new: %v", err)
+	}
+
+	if _, ok := s.Get("rare"); ok {
+		t.Fatal("rare should have been evicted")
+	}
+	if _, ok := s.Get("often"); !ok {
+		t.Fatal("often should remain after LFU eviction")
+	}
+}
+
+func TestVolatileLRUOnlyEvictsExpiringKeys(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 170, EvictionPolicy: PolicyVolatileLRU})
+
+	if err := s.Set("volatile", []byte("1234567890"), 60_000); err != nil {
+		t.Fatalf("set volatile: %v", err)
+	}
+	if err := s.Set("persistent", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set persistent: %v", err)
+	}
+	if err := s.Set("new", []byte("1234567890"), 0); err != nil {
+		t.Fatalf("set new: %v", err)
+	}
+
+	if _, ok := s.Get("volatile"); ok {
+		t.Fatal("volatile key should have been evicted first")
+	}
+	if _, ok := s.Get("persistent"); !ok {
+		t.Fatal("persistent key should remain under volatile-lru")
 	}
 }

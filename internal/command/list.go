@@ -36,9 +36,9 @@ func handleLPush(ctx *CommandContext, args []string) bool {
 	for _, v := range args[2:] {
 		values = append(values, []byte(v))
 	}
-	newLen, ok := ctx.Store.LPush(key, values...)
-	if !ok {
-		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+	newLen, err := ctx.Store.LPush(key, values...)
+	if err != nil {
+		writeStoreError(ctx, err)
 		return false
 	}
 	ctx.Writer.WriteInteger(int64(newLen))
@@ -56,9 +56,9 @@ func handleRPush(ctx *CommandContext, args []string) bool {
 	for _, v := range args[2:] {
 		values = append(values, []byte(v))
 	}
-	newLen, ok := ctx.Store.RPush(key, values...)
-	if !ok {
-		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+	newLen, err := ctx.Store.RPush(key, values...)
+	if err != nil {
+		writeStoreError(ctx, err)
 		return false
 	}
 	ctx.Writer.WriteInteger(int64(newLen))

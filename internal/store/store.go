@@ -1,8 +1,16 @@
 package store
 
 import (
+	"errors"
+	"math/rand"
+	"strings"
 	"sync"
 	"time"
+)
+
+var (
+	ErrMaxMemory = errors.New("maxmemory limit reached")
+	ErrWrongType = errors.New("wrong value type")
 )
 
 type ValueType int
@@ -21,37 +29,106 @@ type Value struct {
 	Set       map[string]struct{}
 	Hash      map[string][]byte
 	ExpiresAt int64
+
+	CreatedAt    int64
+	LastAccessAt int64
+	AccessCount  uint64
+}
+
+type EvictionPolicy string
+
+const (
+	PolicyNoEviction    EvictionPolicy = "noeviction"
+	PolicyAllKeysLRU    EvictionPolicy = "allkeys-lru"
+	PolicyVolatileLRU   EvictionPolicy = "volatile-lru"
+	PolicyAllKeysLFU    EvictionPolicy = "allkeys-lfu"
+	PolicyAllKeysRandom EvictionPolicy = "allkeys-random"
+)
+
+type Config struct {
+	MaxMemory      int64
+	EvictionPolicy EvictionPolicy
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	data map[string]*Value // key -> Value
+	mu     sync.RWMutex
+	data   map[string]*Value // key -> Value
+	config Config
+	rand   *rand.Rand
 }
 
 func NewStore() *Store {
-	return &Store{data: make(map[string]*Value)}
+	return NewStoreWithConfig(Config{})
 }
 
-func (s *Store) Set(key string, val []byte, ttlMs int64) {
+func NewStoreWithConfig(config Config) *Store {
+	if config.EvictionPolicy == "" {
+		config.EvictionPolicy = PolicyNoEviction
+	}
+	return &Store{
+		data:   make(map[string]*Value),
+		config: config,
+		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+}
+
+func ParseEvictionPolicy(policy string) EvictionPolicy {
+	switch EvictionPolicy(strings.ToLower(policy)) {
+	case PolicyAllKeysLRU, PolicyVolatileLRU, PolicyAllKeysLFU, PolicyAllKeysRandom, PolicyNoEviction:
+		return EvictionPolicy(strings.ToLower(policy))
+	default:
+		return PolicyNoEviction
+	}
+}
+
+func (s *Store) Config() Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config
+}
+
+func (s *Store) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteExpiredKeysLocked(time.Now().UnixMilli())
+	return len(s.data)
+}
+
+func (s *Store) MemoryUsage() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteExpiredKeysLocked(time.Now().UnixMilli())
+	return s.memoryUsageLocked()
+}
+
+func (s *Store) Set(key string, val []byte, ttlMs int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v := &Value{Type: StringType, Str: append([]byte(nil), val...)}
-	if ttlMs > 0 {
-		v.ExpiresAt = time.Now().UnixMilli() + ttlMs
-	}
-	s.data[key] = v
+	return s.writeLocked(key, func(now int64) error {
+		v := &Value{Type: StringType, Str: append([]byte(nil), val...), CreatedAt: now}
+		if ttlMs > 0 {
+			v.ExpiresAt = now + ttlMs
+		}
+		s.touchValueLocked(v, now)
+		s.data[key] = v
+		return nil
+	})
 }
 
-func (s *Store) SetAt(key string, val []byte, expiresAtMs int64) {
+func (s *Store) SetAt(key string, val []byte, expiresAtMs int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v := &Value{Type: StringType, Str: append([]byte(nil), val...)}
-	if expiresAtMs > 0 {
-		v.ExpiresAt = expiresAtMs
-	}
-	s.data[key] = v
+	return s.writeLocked(key, func(now int64) error {
+		v := &Value{Type: StringType, Str: append([]byte(nil), val...), CreatedAt: now}
+		if expiresAtMs > 0 {
+			v.ExpiresAt = expiresAtMs
+		}
+		s.touchValueLocked(v, now)
+		s.data[key] = v
+		return nil
+	})
 }
 
 func (s *Store) Get(key string) ([]byte, bool) {
@@ -71,6 +148,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if v.Type != StringType {
 		return nil, false
 	}
+	s.touchValueLocked(v, time.Now().UnixMilli())
 	return append([]byte(nil), v.Str...), true
 }
 
@@ -92,53 +170,236 @@ func (s *Store) Del(keys []string) int {
 	return deleted
 }
 
-func (s *Store) LPush(key string, vals ...[]byte) (int, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) writeLocked(key string, mutate func(now int64) error) error {
+	oldValue, oldExists := s.data[key]
+	oldClone := cloneValue(oldValue)
+	now := time.Now().UnixMilli()
 
-	v, ok := s.data[key]
-	if ok && s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
-		ok = false
+	if err := mutate(now); err != nil {
+		return err
 	}
-	if !ok {
-		v = &Value{Type: ListType}
-		s.data[key] = v
+	if err := s.enforceMemoryLimitLocked(now, key); err != nil {
+		if oldExists {
+			s.data[key] = oldClone
+		} else {
+			delete(s.data, key)
+		}
+		return err
 	}
-	if v.Type != ListType {
-		return 0, false
-	}
-
-	newItems := make([][]byte, len(vals))
-	for i, val := range vals {
-		newItems[i] = append([]byte(nil), val...)
-	}
-	for i, j := 0, len(newItems)-1; i < j; i, j = i+1, j-1 {
-		newItems[i], newItems[j] = newItems[j], newItems[i]
-	}
-	v.List = append(newItems, v.List...)
-	return len(v.List), true
+	return nil
 }
 
-func (s *Store) RPush(key string, vals ...[]byte) (int, bool) {
+func (s *Store) enforceMemoryLimitLocked(now int64, protectedKey string) error {
+	if s.config.MaxMemory <= 0 {
+		return nil
+	}
+
+	s.deleteExpiredKeysLocked(now)
+	for s.memoryUsageLocked() > s.config.MaxMemory {
+		key, ok := s.pickEvictionCandidateLocked(protectedKey)
+		if !ok {
+			return ErrMaxMemory
+		}
+		delete(s.data, key)
+	}
+	return nil
+}
+
+func (s *Store) pickEvictionCandidateLocked(protectedKey string) (string, bool) {
+	switch s.config.EvictionPolicy {
+	case PolicyAllKeysLRU:
+		return s.pickLRULocked(false, protectedKey)
+	case PolicyVolatileLRU:
+		return s.pickLRULocked(true, protectedKey)
+	case PolicyAllKeysLFU:
+		return s.pickLFULocked(protectedKey)
+	case PolicyAllKeysRandom:
+		return s.pickRandomLocked(protectedKey)
+	default:
+		return "", false
+	}
+}
+
+func (s *Store) pickLRULocked(volatileOnly bool, protectedKey string) (string, bool) {
+	var selected string
+	var selectedAt int64
+	found := false
+	for key, val := range s.data {
+		if key == protectedKey {
+			continue
+		}
+		if volatileOnly && val.ExpiresAt == 0 {
+			continue
+		}
+		if !found || val.LastAccessAt < selectedAt {
+			selected = key
+			selectedAt = val.LastAccessAt
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func (s *Store) pickLFULocked(protectedKey string) (string, bool) {
+	var selected string
+	var selectedCount uint64
+	var selectedAt int64
+	found := false
+	for key, val := range s.data {
+		if key == protectedKey {
+			continue
+		}
+		if !found || val.AccessCount < selectedCount || (val.AccessCount == selectedCount && val.LastAccessAt < selectedAt) {
+			selected = key
+			selectedCount = val.AccessCount
+			selectedAt = val.LastAccessAt
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func (s *Store) pickRandomLocked(protectedKey string) (string, bool) {
+	candidates := make([]string, 0, len(s.data))
+	for key := range s.data {
+		if key != protectedKey {
+			candidates = append(candidates, key)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", false
+	}
+	return candidates[s.rand.Intn(len(candidates))], true
+}
+
+func (s *Store) memoryUsageLocked() int64 {
+	var total int64
+	for key, val := range s.data {
+		total += int64(len(key)) + estimateValueSize(val)
+	}
+	return total
+}
+
+func estimateValueSize(v *Value) int64 {
+	if v == nil {
+		return 0
+	}
+
+	const valueOverhead = int64(64)
+	total := valueOverhead
+	switch v.Type {
+	case StringType:
+		total += int64(len(v.Str))
+	case ListType:
+		for _, item := range v.List {
+			total += int64(len(item)) + 8
+		}
+	case SetType:
+		for member := range v.Set {
+			total += int64(len(member)) + 16
+		}
+	case HashType:
+		for field, val := range v.Hash {
+			total += int64(len(field)) + int64(len(val)) + 16
+		}
+	}
+	return total
+}
+
+func cloneValue(v *Value) *Value {
+	if v == nil {
+		return nil
+	}
+	clone := *v
+	clone.Str = append([]byte(nil), v.Str...)
+	if v.List != nil {
+		clone.List = make([][]byte, len(v.List))
+		for i, item := range v.List {
+			clone.List[i] = append([]byte(nil), item...)
+		}
+	}
+	if v.Set != nil {
+		clone.Set = make(map[string]struct{}, len(v.Set))
+		for member := range v.Set {
+			clone.Set[member] = struct{}{}
+		}
+	}
+	if v.Hash != nil {
+		clone.Hash = make(map[string][]byte, len(v.Hash))
+		for field, val := range v.Hash {
+			clone.Hash[field] = append([]byte(nil), val...)
+		}
+	}
+	return &clone
+}
+
+func (s *Store) touchValueLocked(v *Value, now int64) {
+	if v.CreatedAt == 0 {
+		v.CreatedAt = now
+	}
+	v.LastAccessAt = now
+	v.AccessCount++
+}
+
+func (s *Store) LPush(key string, vals ...[]byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
-	if ok && s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
-		ok = false
-	}
-	if !ok {
-		v = &Value{Type: ListType}
-		s.data[key] = v
-	}
-	if v.Type != ListType {
-		return 0, false
-	}
+	newLen := 0
+	err := s.writeLocked(key, func(now int64) error {
+		v, ok := s.data[key]
+		if ok && s.valueExpiredLocked(key, v, now) {
+			ok = false
+		}
+		if !ok {
+			v = &Value{Type: ListType, CreatedAt: now}
+			s.data[key] = v
+		}
+		if v.Type != ListType {
+			return ErrWrongType
+		}
 
-	for _, val := range vals {
-		v.List = append(v.List, append([]byte(nil), val...))
-	}
-	return len(v.List), true
+		newItems := make([][]byte, len(vals))
+		for i, val := range vals {
+			newItems[i] = append([]byte(nil), val...)
+		}
+		for i, j := 0, len(newItems)-1; i < j; i, j = i+1, j-1 {
+			newItems[i], newItems[j] = newItems[j], newItems[i]
+		}
+		v.List = append(newItems, v.List...)
+		s.touchValueLocked(v, now)
+		newLen = len(v.List)
+		return nil
+	})
+	return newLen, err
+}
+
+func (s *Store) RPush(key string, vals ...[]byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	newLen := 0
+	err := s.writeLocked(key, func(now int64) error {
+		v, ok := s.data[key]
+		if ok && s.valueExpiredLocked(key, v, now) {
+			ok = false
+		}
+		if !ok {
+			v = &Value{Type: ListType, CreatedAt: now}
+			s.data[key] = v
+		}
+		if v.Type != ListType {
+			return ErrWrongType
+		}
+
+		for _, val := range vals {
+			v.List = append(v.List, append([]byte(nil), val...))
+		}
+		s.touchValueLocked(v, now)
+		newLen = len(v.List)
+		return nil
+	})
+	return newLen, err
 }
 
 func (s *Store) LRange(key string, start, stop int) ([][]byte, bool) {
@@ -152,6 +413,7 @@ func (s *Store) LRange(key string, start, stop int) ([][]byte, bool) {
 	if v.Type != ListType {
 		return nil, false
 	}
+	s.touchValueLocked(v, time.Now().UnixMilli())
 
 	l := len(v.List)
 	if l == 0 {
@@ -180,25 +442,31 @@ func (s *Store) LRange(key string, start, stop int) ([][]byte, bool) {
 	return out, true
 }
 
-func (s *Store) SAdd(key string, val []byte) (bool, bool) {
+func (s *Store) SAdd(key string, val []byte) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
-	if ok && s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
-		ok = false
-	}
-	if !ok {
-		v = &Value{Type: SetType, Set: make(map[string]struct{})}
-		s.data[key] = v
-	}
-	if v.Type != SetType {
-		return false, false
-	}
+	added := false
+	err := s.writeLocked(key, func(now int64) error {
+		v, ok := s.data[key]
+		if ok && s.valueExpiredLocked(key, v, now) {
+			ok = false
+		}
+		if !ok {
+			v = &Value{Type: SetType, Set: make(map[string]struct{}), CreatedAt: now}
+			s.data[key] = v
+		}
+		if v.Type != SetType {
+			return ErrWrongType
+		}
 
-	_, exists := v.Set[string(val)]
-	v.Set[string(val)] = struct{}{}
-	return !exists, true
+		_, exists := v.Set[string(val)]
+		v.Set[string(val)] = struct{}{}
+		s.touchValueLocked(v, now)
+		added = !exists
+		return nil
+	})
+	return added, err
 }
 
 func (s *Store) SMembers(key string) ([][]byte, bool) {
@@ -212,6 +480,7 @@ func (s *Store) SMembers(key string) ([][]byte, bool) {
 	if v.Type != SetType {
 		return nil, false
 	}
+	s.touchValueLocked(v, time.Now().UnixMilli())
 
 	members := make([][]byte, 0, len(v.Set))
 	for k := range v.Set {
@@ -220,29 +489,34 @@ func (s *Store) SMembers(key string) ([][]byte, bool) {
 	return members, true
 }
 
-func (s *Store) HSet(key, field string, val []byte) (int, bool) {
+func (s *Store) HSet(key, field string, val []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v, ok := s.data[key]
-	if ok && s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
-		ok = false
-	}
-	if !ok {
-		v = &Value{Type: HashType, Hash: make(map[string][]byte)}
-		s.data[key] = v
-	}
-	if v.Type != HashType {
-		return 0, false
-	}
+	created := 0
+	err := s.writeLocked(key, func(now int64) error {
+		v, ok := s.data[key]
+		if ok && s.valueExpiredLocked(key, v, now) {
+			ok = false
+		}
+		if !ok {
+			v = &Value{Type: HashType, Hash: make(map[string][]byte), CreatedAt: now}
+			s.data[key] = v
+		}
+		if v.Type != HashType {
+			return ErrWrongType
+		}
 
-	_, exists := v.Hash[field]
-	v.Hash[field] = append([]byte(nil), val...)
+		_, exists := v.Hash[field]
+		v.Hash[field] = append([]byte(nil), val...)
+		s.touchValueLocked(v, now)
 
-	if exists {
-		return 0, true
-	}
-	return 1, true
+		if !exists {
+			created = 1
+		}
+		return nil
+	})
+	return created, err
 }
 
 func (s *Store) HGet(key, field string) ([]byte, bool) {
@@ -258,6 +532,7 @@ func (s *Store) HGet(key, field string) ([]byte, bool) {
 	if !exists {
 		return nil, false
 	}
+	s.touchValueLocked(v, time.Now().UnixMilli())
 	return append([]byte(nil), val...), true
 }
 
@@ -270,6 +545,14 @@ func (s *Store) valueExpiredLocked(key string, v *Value, now int64) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Store) deleteExpiredKeysLocked(now int64) {
+	for key, val := range s.data {
+		if val.ExpiresAt > 0 && now >= val.ExpiresAt {
+			delete(s.data, key)
+		}
+	}
 }
 
 func (s *Store) deleteExpiredLocked(key string, now int64) bool {
@@ -287,7 +570,9 @@ func (s *Store) Expire(key string, seconds int64) bool {
 	if !ok || s.valueExpiredLocked(key, v, time.Now().UnixMilli()) {
 		return false
 	}
-	v.ExpiresAt = time.Now().UnixMilli() + seconds*1000
+	now := time.Now().UnixMilli()
+	v.ExpiresAt = now + seconds*1000
+	s.touchValueLocked(v, now)
 	return true
 }
 
@@ -299,6 +584,7 @@ func (s *Store) ExpireAt(key string, expiresAtMs int64) bool {
 		return false
 	}
 	v.ExpiresAt = expiresAtMs
+	s.touchValueLocked(v, time.Now().UnixMilli())
 	return true
 }
 
@@ -334,6 +620,18 @@ func (s *Store) StartTTLChecker(interval time.Duration) {
 					delete(s.data, key)
 				}
 			}
+			s.mu.Unlock()
+		}
+	}()
+}
+
+func (s *Store) StartEvictionChecker(interval time.Duration) {
+	go func() {
+		for {
+			time.Sleep(interval)
+			now := time.Now().UnixMilli()
+			s.mu.Lock()
+			_ = s.enforceMemoryLimitLocked(now, "")
 			s.mu.Unlock()
 		}
 	}()

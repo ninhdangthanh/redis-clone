@@ -90,12 +90,18 @@ This document outlines a complete, ordered, and practical roadmap for building a
 ---
 
 ## 8. Eviction & Memory Management
-- Add configurable `maxmemory`.
-- Implement approximate eviction algorithms:
-  - LRU
-  - LFU
-  - FIFO
-- Background eviction loop to free memory.
+- Configure memory limits with environment variables:
+  - `MAXMEMORY=<bytes>`
+  - `MAXMEMORY_POLICY=<policy>`
+- Supported policies:
+  - `noeviction`
+  - `allkeys-lru`
+  - `volatile-lru`
+  - `allkeys-lfu`
+  - `allkeys-random`
+- Tracks approximate memory usage plus per-key last-access time and access count.
+- Runs a background eviction loop to keep memory usage under the configured limit.
+- Returns an OOM error when a write cannot fit and no key can be evicted.
 
 ---
 

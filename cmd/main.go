@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"redis-clone/internal"
 	"redis-clone/internal/aof"
 	"redis-clone/internal/command"
@@ -113,6 +114,19 @@ func ReplayAOF(store *store.Store, aofFile *aof.AOF) error {
 	})
 }
 
+func storeConfigFromEnv() store.Config {
+	config := store.Config{
+		EvictionPolicy: store.ParseEvictionPolicy(os.Getenv("MAXMEMORY_POLICY")),
+	}
+	if raw := os.Getenv("MAXMEMORY"); raw != "" {
+		maxMemory, err := strconv.ParseInt(raw, 10, 64)
+		if err == nil && maxMemory > 0 {
+			config.MaxMemory = maxMemory
+		}
+	}
+	return config
+}
+
 func main() {
 	aofFile, err := aof.Open("appendonly.aof", aof.FsyncEverySec)
 	if err != nil {
@@ -124,8 +138,9 @@ func main() {
 		}
 	}()
 
-	store := store.NewStore()
+	store := store.NewStoreWithConfig(storeConfigFromEnv())
 	store.StartTTLChecker(time.Second)
+	store.StartEvictionChecker(time.Second)
 
 	if err := ReplayAOF(store, aofFile); err != nil {
 		fmt.Printf("AOF replay error: %v\n", err)

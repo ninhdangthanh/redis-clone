@@ -257,15 +257,18 @@ Read commands (`GET`, `TTL`, `PING`, etc.) are never written to the AOF.
 
 ---
 
-## Phase 8 · Eviction & Memory Management ❌
+## Phase 8 · Eviction & Memory Management ✅
 
-**Status:** Not yet implemented.
+**Status:** Implemented.
 
-**Plan:**
-- Add a `maxmemory` config field (bytes).
-- Track last-access time or access frequency per key to support LRU/LFU approximation.
-- Run a background eviction goroutine that triggers when memory usage exceeds the limit.
-- Support eviction policies: `allkeys-lru`, `volatile-lru`, `allkeys-lfu`, `allkeys-random`, `noeviction`.
+**What was added:**
+- `store.Config` with `MaxMemory` bytes and `EvictionPolicy`.
+- Environment config in `main.go`: `MAXMEMORY` and `MAXMEMORY_POLICY`.
+- Approximate memory tracking for strings, lists, sets, hashes, keys, and per-value overhead.
+- Access metadata per key (`LastAccessAt`, `AccessCount`) for LRU/LFU approximation.
+- Background eviction loop via `StartEvictionChecker`.
+- Supported policies: `allkeys-lru`, `volatile-lru`, `allkeys-lfu`, `allkeys-random`, `noeviction`.
+- Redis-style OOM errors for writes that cannot fit under the configured memory limit.
 
 ---
 

@@ -32,9 +32,9 @@ func handleSAdd(ctx *CommandContext, args []string) bool {
 	added := 0
 
 	for _, member := range args[2:] {
-		wasAdded, ok := ctx.Store.SAdd(key, []byte(member))
-		if !ok {
-			ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+		wasAdded, err := ctx.Store.SAdd(key, []byte(member))
+		if err != nil {
+			writeStoreError(ctx, err)
 			return false
 		}
 		if wasAdded {

@@ -1,7 +1,9 @@
 package command
 
 import (
+	"errors"
 	"fmt"
+	"redis-clone/internal/store"
 	"strconv"
 	"strings"
 )
@@ -62,7 +64,10 @@ func HandleSet(ctx *CommandContext, args []string) bool {
 				ctx.Writer.WriteError("invalid expire time")
 				return false
 			}
-			ctx.Store.SetAt(key, val, expiresAtMs)
+			if err := ctx.Store.SetAt(key, val, expiresAtMs); err != nil {
+				writeStoreError(ctx, err)
+				return false
+			}
 			ctx.Writer.WriteSimpleString("OK")
 			return true
 
@@ -72,7 +77,10 @@ func HandleSet(ctx *CommandContext, args []string) bool {
 		}
 	}
 
-	ctx.Store.Set(key, val, ttlMs)
+	if err := ctx.Store.Set(key, val, ttlMs); err != nil {
+		writeStoreError(ctx, err)
+		return false
+	}
 	ctx.Writer.WriteSimpleString("OK")
 	return true
 }
@@ -106,4 +114,15 @@ func HandleDel(ctx *CommandContext, args []string) bool {
 
 	ctx.Writer.WriteInteger(int64(deleted))
 	return true
+}
+
+func writeStoreError(ctx *CommandContext, err error) {
+	switch {
+	case errors.Is(err, store.ErrMaxMemory):
+		ctx.Writer.WriteError("OOM command not allowed when used memory > 'maxmemory'")
+	case errors.Is(err, store.ErrWrongType):
+		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+	default:
+		ctx.Writer.WriteError(err.Error())
+	}
 }

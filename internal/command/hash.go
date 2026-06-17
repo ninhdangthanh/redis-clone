@@ -32,9 +32,9 @@ func handleHSet(ctx *CommandContext, args []string) bool {
 	field := args[2]
 	value := []byte(args[3])
 
-	isNew, ok := ctx.Store.HSet(key, field, value)
-	if !ok {
-		ctx.Writer.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+	isNew, err := ctx.Store.HSet(key, field, value)
+	if err != nil {
+		writeStoreError(ctx, err)
 		return false
 	}
 	ctx.Writer.WriteInteger(int64(isNew)) // 1 if new field, 0 if updated
