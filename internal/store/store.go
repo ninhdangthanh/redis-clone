@@ -179,6 +179,7 @@ func (s *Store) writeLocked(key string, mutate func(now int64) error) error {
 		return err
 	}
 	if err := s.enforceMemoryLimitLocked(now, key); err != nil {
+		// roolback
 		if oldExists {
 			s.data[key] = oldClone
 		} else {
