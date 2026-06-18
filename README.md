@@ -118,20 +118,10 @@ This document outlines a complete, ordered, and practical roadmap for building a
 - Handle blocking connections.
 #### thử cả Observe design pattern và go routine, channel
 
----
-
-## 10. Transactions (MULTI/EXEC)
-- Implement transaction queue per connection.
-- Support:
-  - `MULTI`
-  - `EXEC`
-  - `DISCARD`
-- Ensure atomic execution of queued commands.
-- Handle errors inside queued commands.
 
 ---
 
-## 11. Graceful Shutdown
+## 10. Graceful Shutdown
 - Catch termination signals (SIGTERM, SIGINT).
 - Flush AOF before exit.
 - Stop background workers:
@@ -140,7 +130,7 @@ This document outlines a complete, ordered, and practical roadmap for building a
   - Eviction loop
 - Close all client connections cleanly.
 
-## 12. Redis single thread
+## 11. Redis single thread
 Client A ---- \
 Client B ----- > Redis event loop (1 thread) -> execute command 
 
@@ -155,5 +145,13 @@ Client C ---- /
 - Slowlog
 - INFO command
 - MONITOR command
+- Transactions (MULTI/EXEC)
+- - Implement transaction queue per connection.
+- - Support:
+  - - `MULTI`
+  - - `EXEC`
+  - - `DISCARD`
+- - Ensure atomic execution of queued commands.
+- - Handle errors inside queued commands.
 
 ---
