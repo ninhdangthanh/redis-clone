@@ -181,6 +181,8 @@ func main() {
 
 	store := store.NewStoreWithConfig(storeConfigFromEnv())
 	store.StartTTLChecker(time.Second)
+
+	// change memory limitation,...
 	store.StartEvictionChecker(time.Second)
 
 	if err := ReplayAOF(store, aofFile); err != nil {
