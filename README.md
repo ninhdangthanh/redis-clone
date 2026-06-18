@@ -115,8 +115,11 @@ This document outlines a complete, ordered, and practical roadmap for building a
   - `UNSUBSCRIBE`
   - `PUBLISH`
 - Broadcast messages to subscribers.
-- Handle blocking connections.
-#### thử cả Observe design pattern và go routine, channel
+- Handle subscribed-mode connections with goroutines and channels.
+- Use an Observer-style hub:
+  - `Hub` tracks channels and subscribers.
+  - `Subscriber` receives messages through a buffered Go channel.
+  - `PUBLISH` fans messages out to current subscribers and returns receiver count.
 
 ---
 
