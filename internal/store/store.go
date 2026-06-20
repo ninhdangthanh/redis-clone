@@ -50,6 +50,28 @@ type Config struct {
 	EvictionPolicy EvictionPolicy
 }
 
+// Metrics contains current resource and key-expiration measurements for a Store.
+type Metrics struct {
+	KeyCount         int
+	MemoryUsageBytes int64
+	ExpiringKeys     int
+}
+
+// State contains the current distribution of values by Redis data type.
+type State struct {
+	StringKeys int
+	ListKeys   int
+	SetKeys    int
+	HashKeys   int
+}
+
+// Info is a point-in-time Store snapshot intended for diagnostics and monitoring.
+type Info struct {
+	Config  Config
+	Metrics Metrics
+	State   State
+}
+
 type Store struct {
 	mu     sync.RWMutex
 	data   map[string]*Value // key -> Value
@@ -85,6 +107,47 @@ func (s *Store) Config() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.config
+}
+
+// Metrics returns current memory, key-count, and expiration measurements.
+func (s *Store) Metrics() Metrics {
+	return s.Info().Metrics
+}
+
+// State returns the current number of keys for each supported data type.
+func (s *Store) State() State {
+	return s.Info().State
+}
+
+// Info returns a consistent diagnostics snapshot of the Store.
+func (s *Store) Info() Info {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.deleteExpiredKeysLocked(time.Now().UnixMilli())
+	info := Info{
+		Config: s.config,
+		Metrics: Metrics{
+			KeyCount:         len(s.data),
+			MemoryUsageBytes: s.memoryUsageLocked(),
+		},
+	}
+	for _, value := range s.data {
+		if value.ExpiresAt > 0 {
+			info.Metrics.ExpiringKeys++
+		}
+		switch value.Type {
+		case StringType:
+			info.State.StringKeys++
+		case ListType:
+			info.State.ListKeys++
+		case SetType:
+			info.State.SetKeys++
+		case HashType:
+			info.State.HashKeys++
+		}
+	}
+	return info
 }
 
 func (s *Store) Len() int {

@@ -25,6 +25,9 @@ func Dispatch(ctx *command.CommandContext, args []string) bool {
 	case "QUIT":
 		return command.HandleQuit(ctx, args)
 
+	case "INFO":
+		return command.HandleInfo(ctx, args)
+
 	case "SET", "GET", "DEL":
 		return command.HandleStringCommands(ctx, args)
 

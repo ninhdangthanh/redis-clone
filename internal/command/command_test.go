@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,24 @@ func TestBasicCommands(t *testing.T) {
 				t.Fatalf("response = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInfoCommand(t *testing.T) {
+	ctx, buf := newCommandTestContext()
+	if err := ctx.Store.Set("key", []byte("value"), 0); err != nil {
+		t.Fatalf("Set returned error: %v", err)
+	}
+
+	if !HandleInfo(ctx, []string{"INFO", "METRICS"}) {
+		t.Fatal("INFO METRICS returned false")
+	}
+	response := buf.String()
+	if !strings.Contains(response, "# Metrics\n") || !strings.Contains(response, "key_count:1\n") {
+		t.Fatalf("INFO METRICS response = %q", response)
+	}
+	if strings.Contains(response, "# Config\n") || strings.Contains(response, "# State\n") {
+		t.Fatalf("INFO METRICS should not include other sections: %q", response)
 	}
 }
 

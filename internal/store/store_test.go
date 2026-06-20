@@ -28,6 +28,33 @@ func TestTTLStates(t *testing.T) {
 	}
 }
 
+func TestInfoReportsMetricsConfigAndState(t *testing.T) {
+	s := NewStoreWithConfig(Config{MaxMemory: 1024, EvictionPolicy: PolicyAllKeysLRU})
+	if err := s.Set("string", []byte("value"), 60_000); err != nil {
+		t.Fatalf("Set returned error: %v", err)
+	}
+	if _, err := s.RPush("list", []byte("one")); err != nil {
+		t.Fatalf("RPush returned error: %v", err)
+	}
+	if _, err := s.SAdd("set", []byte("one")); err != nil {
+		t.Fatalf("SAdd returned error: %v", err)
+	}
+	if _, err := s.HSet("hash", "field", []byte("value")); err != nil {
+		t.Fatalf("HSet returned error: %v", err)
+	}
+
+	info := s.Info()
+	if info.Config.MaxMemory != 1024 || info.Config.EvictionPolicy != PolicyAllKeysLRU {
+		t.Fatalf("config = %+v, want maxmemory 1024 and allkeys-lru", info.Config)
+	}
+	if info.Metrics.KeyCount != 4 || info.Metrics.ExpiringKeys != 1 || info.Metrics.MemoryUsageBytes <= 0 {
+		t.Fatalf("metrics = %+v, want 4 keys, 1 expiring key, and memory usage", info.Metrics)
+	}
+	if info.State != (State{StringKeys: 1, ListKeys: 1, SetKeys: 1, HashKeys: 1}) {
+		t.Fatalf("state = %+v, want one key of each type", info.State)
+	}
+}
+
 func TestExpiredKeyCanChangeType(t *testing.T) {
 	s := NewStore()
 	s.Set("key", []byte("value"), 1)
