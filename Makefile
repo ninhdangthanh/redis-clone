@@ -1,15 +1,17 @@
 APP_NAME := redis-clone
 BIN_DIR := bin
 BIN := $(BIN_DIR)/redis-server
+AIR_BIN := $(BIN_DIR)/air
 DOCKER_IMAGE := redis-clone:latest
 DOCKER_COMPOSE ?= docker compose
 GOCACHE ?= $(CURDIR)/.gocache
 
-.PHONY: help run build test clean docker-build compose-up compose-down compose-logs compose-ps compose-restart
+.PHONY: help run dev build test clean docker-build compose-up compose-down compose-logs compose-ps compose-restart
 
 help:
 	@echo "Redis clone commands:"
 	@echo "  make run              Run locally with go run ./cmd/main.go"
+	@echo "  make dev              Run locally with Air autoreload"
 	@echo "  make build            Build local binary at $(BIN)"
 	@echo "  make test             Run Go tests"
 	@echo "  make clean            Remove local build output"
@@ -22,6 +24,13 @@ help:
 
 run:
 	GOCACHE=$(GOCACHE) go run ./cmd/main.go
+
+dev: $(AIR_BIN)
+	$(AIR_BIN) -c .air.toml
+
+$(AIR_BIN):
+	mkdir -p $(BIN_DIR)
+	GOBIN=$(CURDIR)/$(BIN_DIR) GOCACHE=$(GOCACHE) go install github.com/air-verse/air@latest
 
 build:
 	mkdir -p $(BIN_DIR)
