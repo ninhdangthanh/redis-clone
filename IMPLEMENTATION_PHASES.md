@@ -290,20 +290,7 @@ Pub/Sub state is intentionally runtime-only: it is not stored in `Store` and is 
 
 ---
 
-## Phase 10 · Transactions (MULTI/EXEC) ❌
-
-**Status:** Not yet implemented.
-
-**Plan:**
-- Add a `queued [][]string` slice to `CommandContext` and a `InMulti bool` flag.
-- `MULTI` sets `InMulti = true`. Subsequent commands are appended to the queue instead of being executed.
-- `EXEC` atomically dispatches all queued commands and returns an array of replies.
-- `DISCARD` clears the queue and resets `InMulti`.
-- Syntax errors during MULTI result in `EXECABORT`; runtime errors return per-command errors without aborting the rest.
-
----
-
-## Phase 11 · Graceful Shutdown ❌
+## Phase 10 · Graceful Shutdown ❌
 
 **Status:** Not yet implemented.
 

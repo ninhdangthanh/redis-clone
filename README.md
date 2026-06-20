@@ -121,20 +121,10 @@ This document outlines a complete, ordered, and practical roadmap for building a
   - `Subscriber` receives messages through a buffered Go channel.
   - `PUBLISH` fans messages out to current subscribers and returns receiver count.
 
----
-
-## 10. Transactions (MULTI/EXEC)
-- Implement transaction queue per connection.
-- Support:
-  - `MULTI`
-  - `EXEC`
-  - `DISCARD`
-- Ensure atomic execution of queued commands.
-- Handle errors inside queued commands.
 
 ---
 
-## 11. Graceful Shutdown
+## 10. Graceful Shutdown
 - Catch termination signals (SIGTERM, SIGINT).
 - Flush AOF before exit.
 - Stop background workers:
@@ -143,7 +133,7 @@ This document outlines a complete, ordered, and practical roadmap for building a
   - Eviction loop
 - Close all client connections cleanly.
 
-## 12. Redis single thread
+## 11. Redis single thread
 Client A ---- \
 Client B ----- > Redis event loop (1 thread) -> execute command 
 
@@ -158,5 +148,13 @@ Client C ---- /
 - Slowlog
 - INFO command
 - MONITOR command
+- Transactions (MULTI/EXEC)
+- - Implement transaction queue per connection.
+- - Support:
+  - - `MULTI`
+  - - `EXEC`
+  - - `DISCARD`
+- - Ensure atomic execution of queued commands.
+- - Handle errors inside queued commands.
 
 ---
