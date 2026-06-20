@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync"
@@ -175,6 +176,12 @@ func (s *Store) Set(key string, val []byte, ttlMs int64) error {
 		}
 		s.touchValueLocked(v, now)
 		s.data[key] = v
+		fmt.Printf("[STORE] SET key=%q estimated=%dB used_memory=%dB max_memory=%dB\n",
+			key,
+			int64(len(key))+estimateValueSize(v),
+			s.memoryUsageLocked(),
+			s.config.MaxMemory,
+		)
 		return nil
 	})
 }
@@ -264,7 +271,16 @@ func (s *Store) enforceMemoryLimitLocked(now int64, protectedKey string) error {
 		if !ok {
 			return ErrMaxMemory
 		}
+		usedBefore := s.memoryUsageLocked()
+		freed := int64(len(key)) + estimateValueSize(s.data[key])
 		delete(s.data, key)
+		fmt.Printf("[STORE] EVICT key=%q freed=%dB used_memory=%dB -> %dB limit=%dB\n",
+			key,
+			freed,
+			usedBefore,
+			s.memoryUsageLocked(),
+			s.config.MaxMemory,
+		)
 	}
 	return nil
 }
@@ -349,6 +365,7 @@ func estimateValueSize(v *Value) int64 {
 		return 0
 	}
 
+	// 64: Approximate metadata cost per stored value for memory-limit eviction.
 	const valueOverhead = int64(64)
 	total := valueOverhead
 	switch v.Type {

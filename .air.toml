@@ -6,10 +6,10 @@ tmp_dir = "tmp"
   entrypoint = "./tmp/redis-server"
   include_ext = ["go"]
   exclude_dir = ["bin", "tmp", ".git", ".gocache"]
-  delay = 1000
+  delay = 1500
   stop_on_error = true
   send_interrupt = true
-  kill_delay = "500ms"
+  kill_delay = "2s"
 
 [log]
   time = true
