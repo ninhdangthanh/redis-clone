@@ -126,4 +126,7 @@ func TestVolatileLRUOnlyEvictsExpiringKeys(t *testing.T) {
 	if _, ok := s.Get("persistent"); !ok {
 		t.Fatal("persistent key should remain under volatile-lru")
 	}
+	if _, ok := s.Get("new"); !ok {
+		t.Fatal("new key should remain under volatile-lru")
+	}
 }
