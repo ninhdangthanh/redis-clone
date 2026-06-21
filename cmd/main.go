@@ -148,6 +148,7 @@ func serveSubscribedConn(cmdCh <-chan parsedCommand, ctx *command.CommandContext
 				return true
 			}
 		case msg := <-sub.Messages:
+			time.Sleep(5 * time.Second)
 			command.WritePubSubMessage(ctx.Writer, msg)
 		}
 	}

@@ -44,7 +44,7 @@ func NewHubWithBuffer(bufferLimit int) *Hub {
 func (h *Hub) NewSubscriber() *Subscriber {
 	return &Subscriber{
 		ID:       h.nextID.Add(1),
-		Messages: make(chan Message, h.bufferLimit),
+		Messages: make(chan Message, 2),
 		channels: make(map[string]struct{}),
 	}
 }
