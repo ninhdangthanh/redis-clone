@@ -468,7 +468,130 @@ Implementation này đúng cho Phase 9, nhưng Redis thật phức tạp hơn:
 - Pub/Sub hiện tại là runtime-only: không ghi vào `Store` và không replay từ AOF sau restart.
 - Chưa có pattern subscription (`PSUBSCRIBE`) hay lệnh thống kê Pub/Sub.
 
-## 15. Cách test thủ công bằng `redis-cli`
+## 15. Buffer, backpressure và slow subscriber
+
+`Hub` lưu `bufferLimit` và dùng nó khi tạo inbox cho mỗi subscriber:
+
+```go
+Messages: make(chan Message, h.bufferLimit)
+```
+
+Trong project, giá trị mặc định là:
+
+```go
+const DefaultSubscriberBuffer = 256
+```
+
+Điều này có nghĩa mỗi `Subscriber` có thể giữ tối đa 256 Pub/Sub message đang chờ `serveSubscribedConn` đọc và ghi ra socket.
+
+### Khi buffer đầy thì sao?
+
+Khi buffer đã đủ 256 item, phép gửi này:
+
+```go
+sub.Messages <- msg
+```
+
+sẽ **block**. Nó không trả error, không tự bỏ message, và không tự thoát goroutine. Goroutine đang chạy `Publish` sẽ chờ đến khi subscriber đọc bớt ít nhất một message khỏi `sub.Messages`.
+
+Với implementation hiện tại, command `PUBLISH` đang chạy trên goroutine của connection publisher. Vì vậy publisher đó không thể xử lý command tiếp theo trong lúc bị block.
+
+Hơn nữa, `Publish` gửi tuần tự:
+
+```go
+for _, sub := range subscribers {
+    sub.Messages <- msg
+}
+```
+
+Nếu một subscriber chậm làm send block, các subscriber đứng sau nó trong slice cũng chưa nhận được message. Đây là risk thật của implementation hiện tại, đặc biệt khi subscriber disconnect đúng lúc channel của nó đầy. Redis thật có output-buffer limit và thường disconnect client chậm thay vì cho publisher block vô hạn.
+
+### Unbuffered channel
+
+Go không có default buffer limit. Buffer do nơi tạo channel quyết định:
+
+```go
+make(chan Message)      // unbuffered, capacity = 0
+make(chan Message, 1)   // buffered, capacity = 1
+make(chan Message, 256) // buffered, capacity = 256
+```
+
+Với unbuffered channel:
+
+```go
+messages := make(chan Message)
+```
+
+Publisher gửi:
+
+```go
+messages <- msg
+```
+
+và chỉ chạy tiếp khi receiver đang nhận:
+
+```go
+msg := <-messages
+```
+
+Publisher không cần đợi receiver xử lý xong hoàn toàn, nhưng phải đợi receiver bắt đầu nhận message. Nếu subscriber đang bận xử lý command khác hoặc đang kẹt khi ghi socket, publisher vẫn block.
+
+### Hai thuộc tính độc lập của channel
+
+Khi nói về channel trong Go, nên tách thành hai thuộc tính độc lập:
+
+| Thuộc tính | Các giá trị | Ý nghĩa |
+| --- | --- | --- |
+| **Buffering / capacity** | unbuffered (`cap = 0`), buffered (`cap > 0`) | Channel giữ được bao nhiêu item trước khi sender phải chờ. |
+| **Direction** | hai chiều, chỉ nhận, chỉ gửi | Code được phép gửi, nhận, hoặc cả hai trên channel đó. |
+
+Nói chính xác, `buffered` và `unbuffered` mô tả **buffering mode**, được quyết định bởi **channel capacity**. `capacity` là con số cụ thể, ví dụ `0`, `1`, hoặc `256`.
+
+`chan T`, `<-chan T`, và `chan<- T` mô tả **channel direction**.
+
+### Channel direction
+
+Theo quyền sử dụng:
+
+```go
+chan T       // gửi và nhận
+<-chan T     // chỉ nhận
+chan<- T     // chỉ gửi
+```
+
+Theo buffer:
+
+```go
+make(chan T)     // unbuffered: send phải chờ receiver
+make(chan T, n)  // buffered: chứa tối đa n item trước khi send block
+```
+
+`nil` channel cũng tồn tại: gửi hoặc nhận trên nó sẽ block mãi. Nó thường được dùng để bật/tắt một case trong `select`, không dùng làm inbox Pub/Sub bình thường.
+
+### Trade-off khi chọn buffer capacity
+
+| Kiểu | Lợi | Hại | Phù hợp khi |
+| --- | --- | --- | --- |
+| Unbuffered, capacity `0` | Backpressure ngay, ít dùng RAM, sender/receiver đồng bộ chặt | Sender block rất dễ; throughput giảm khi receiver chậm | Handoff đồng bộ hoặc worker luôn sẵn sàng nhận |
+| Buffer thấp, ví dụ `1-16` | Hấp thụ burst nhỏ, ít RAM, phát hiện consumer chậm sớm | Vẫn block nhanh khi traffic tăng | Event ít, muốn backpressure rõ ràng |
+| Buffer vừa, ví dụ `64-1024` | Cân bằng throughput, chịu burst ngắn, sender ít block hơn | Tốn RAM theo số connection; message có thể chờ lâu hơn | Pub/Sub nhỏ hoặc vừa; Phase 9 hiện tại dùng `256` |
+| Buffer cao, ví dụ `10000+` | Hấp thụ burst lớn trong ngắn hạn | Tốn RAM, che giấu client chậm, tăng độ trễ và có thể OOM | Chỉ khi có memory limit, metrics và chính sách xử lý slow consumer |
+
+Một cách ước lượng memory của inbox là:
+
+```text
+số subscriber × buffer capacity × kích thước message trung bình
+```
+
+Ví dụ 1.000 subscriber, buffer `256`, message trung bình 1 KB:
+
+```text
+1.000 × 256 × 1 KB ≈ 250 MB
+```
+
+Buffer cao không làm hệ thống nhanh miễn phí. Nó đổi từ việc publisher bị chờ ngay sang việc message chờ trong RAM lâu hơn.
+
+## 16. Cách test thủ công bằng `redis-cli`
 
 Terminal 1:
 
@@ -505,7 +628,7 @@ GET key / SET key value ở A -> phải chạy được normal mode
 Restart server -> subscriptions cũ biến mất
 ```
 
-## 16. Câu hỏi tự kiểm tra
+## 17. Câu hỏi tự kiểm tra
 
 1. Command `PING` trong subscribed mode đi qua channel nào? `cmdCh`.
 2. Message từ `PUBLISH` đi qua channel nào? `sub.Messages`.
@@ -515,3 +638,36 @@ Restart server -> subscriptions cũ biến mất
 6. Tại sao `map[*Subscriber]struct{}` tốt hơn slice ở đây? Uniqueness và subscribe/unsubscribe trung bình `O(1)`.
 7. Tại sao không giữ `h.mu` khi gửi vào `sub.Messages`? Subscriber chậm có thể làm send block và khóa các thao tác Hub khác.
 8. Tại sao `GET` chạy được sau unsubscribe cuối? `serveSubscribedConn` đã return, connection đã trở lại normal mode.
+9. Buffer `sub.Messages` đầy thì điều gì xảy ra? `Publish` block, không có error hay tự drop message.
+10. Unbuffered channel bắt sender chờ đến khi nào? Đến khi receiver bắt đầu nhận message.
+11. Buffer cao đánh đổi điều gì? Ít block hơn trong burst ngắn, nhưng dùng nhiều RAM và có thể che giấu slow subscriber.
+
+## 18. Extra questions và ý tưởng học thêm
+
+Phần này chưa phải yêu cầu để hoàn thành Phase 9. Đây là các câu hỏi và bài tập tự nhiên để học sâu hơn từ implementation Pub/Sub hiện tại.
+
+### Những khái niệm còn nên học
+
+- **Channel ownership và `close`**: nguyên tắc phổ biến là sender cuối cùng mới đóng channel. Không close `sub.Messages` ở implementation hiện tại giúp tránh panic `send on closed channel` khi publisher đang gửi theo snapshot.
+- **Goroutine leak**: goroutine bị kẹt mãi ở send, receive, hoặc network read mà không có đường thoát. Hãy luôn xác định điều kiện dừng của mỗi goroutine.
+- **Cancellation với `context.Context`**: truyền `ctx.Done()` vào `select` để goroutine dừng khi server shutdown, client disconnect, hoặc timeout.
+- **`sync.WaitGroup`**: chờ một nhóm goroutine kết thúc, đặc biệt hữu ích trong graceful shutdown.
+- **Timeout trong `select`**: dùng `time.NewTimer`, `time.Ticker`, hoặc `context` để tránh chờ vô hạn.
+- **Race detector**: chạy test với `go test -race ./...` để phát hiện truy cập memory đồng thời không an toàn.
+- **Single writer per connection**: nếu nhiều goroutine cùng ghi một socket, RESP response có thể bị xen kẽ. Nên có một nơi duy nhất chịu trách nhiệm ghi cho mỗi connection, hoặc dùng writer queue.
+- **Backpressure policy**: khi subscriber chậm, hệ thống cần quyết định block publisher, drop message, retry, hay disconnect client. Mỗi lựa chọn đổi giữa độ tin cậy, độ trễ, và memory.
+
+### Bài tập concurrency có liên quan
+
+1. **Worker pool**: nhiều worker nhận job từ channel, có queue limit, `WaitGroup`, cancellation và shutdown sạch.
+2. **Pipeline**: chia xử lý thành `read -> parse -> validate -> process -> write`, mỗi stage giao tiếp qua channel.
+3. **Fan-out / fan-in**: chia một input cho nhiều worker rồi gom kết quả về một channel.
+4. **Rate limiter**: dùng `time.Ticker` hoặc token bucket để giới hạn số event xử lý trong một khoảng thời gian.
+5. **Graceful shutdown**: bắt `SIGINT`, cancel context, dừng nhận connection, chờ goroutine hoàn tất và flush AOF.
+6. **Nâng cấp Pub/Sub**: xử lý slow subscriber bằng non-blocking send, metrics, giới hạn queue, hoặc disconnect khi vượt ngưỡng.
+
+### Thứ tự học gợi ý trong project này
+
+Sau Phase 9, Phase 11 Graceful Shutdown là bài tiếp nối rất hợp lý. Nó buộc implementation quản lý vòng đời goroutine, cancellation, `WaitGroup`, close channel và cleanup connection một cách có chủ đích.
+
+Khi bắt đầu implement một ý cụ thể trong danh sách trên, nên tạo note riêng cho ý đó. Ví dụ `docs/graceful_shutdown_explanation.md` hoặc `docs/pubsub_slow_subscriber.md` để note Phase 9 vẫn tập trung vào kiến trúc Pub/Sub cơ bản.
