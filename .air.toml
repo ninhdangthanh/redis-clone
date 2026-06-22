@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/redis-server ./cmd/main.go"
+  cmd = "go build -o ./tmp/redis-server ./cmd"
   entrypoint = "./tmp/redis-server"
   include_ext = ["go"]
   exclude_dir = ["bin", "tmp", ".git", ".gocache"]

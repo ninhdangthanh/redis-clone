@@ -21,11 +21,14 @@ const (
 )
 
 type AOF struct {
-	mu     sync.Mutex
-	f      *os.File
-	w      *bufio.Writer
-	mode   FsyncMode
-	quitCh chan struct{}
+	mu        sync.Mutex
+	f         *os.File
+	w         *bufio.Writer
+	mode      FsyncMode
+	quitCh    chan struct{}
+	workerWG  sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func ParseMode(s string) FsyncMode {
@@ -53,6 +56,7 @@ func Open(path string, mode FsyncMode) (*AOF, error) {
 	}
 
 	if mode == FsyncEverySec {
+		a.workerWG.Add(1)
 		go a.syncEverySecond()
 	}
 
@@ -60,6 +64,7 @@ func Open(path string, mode FsyncMode) (*AOF, error) {
 }
 
 func (a *AOF) syncEverySecond() {
+	defer a.workerWG.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -80,16 +85,37 @@ func (a *AOF) syncEverySecond() {
 }
 
 func (a *AOF) Close() error {
-	close(a.quitCh)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.w != nil {
-		a.w.Flush()
+	if a == nil {
+		return nil
 	}
-	if a.f != nil {
-		return a.f.Close()
-	}
-	return nil
+
+	a.closeOnce.Do(func() {
+		close(a.quitCh)
+		a.workerWG.Wait()
+
+		a.mu.Lock()
+		defer a.mu.Unlock()
+
+		var errs []error
+		if a.w != nil {
+			if err := a.w.Flush(); err != nil {
+				errs = append(errs, fmt.Errorf("flush aof: %w", err))
+			}
+		}
+		if a.f != nil {
+			if err := a.f.Sync(); err != nil {
+				errs = append(errs, fmt.Errorf("sync aof: %w", err))
+			}
+			if err := a.f.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("close aof: %w", err))
+			}
+		}
+		a.w = nil
+		a.f = nil
+		a.closeErr = errors.Join(errs...)
+	})
+
+	return a.closeErr
 }
 
 // Append writes the command as a RESP array to the AOF file.
@@ -99,6 +125,9 @@ func (a *AOF) Append(args []string) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.w == nil || a.f == nil {
+		return errors.New("aof is closed")
+	}
 
 	// encode as RESP array
 	var b strings.Builder

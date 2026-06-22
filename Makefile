@@ -10,7 +10,7 @@ GOCACHE ?= $(CURDIR)/.gocache
 
 help:
 	@echo "Redis clone commands:"
-	@echo "  make run              Run locally with go run ./cmd/main.go"
+	@echo "  make run              Run locally with go run ./cmd"
 	@echo "  make dev              Run locally with Air autoreload"
 	@echo "  make build            Build local binary at $(BIN)"
 	@echo "  make test             Run Go tests"
@@ -23,7 +23,7 @@ help:
 	@echo "  make compose-restart  Restart docker compose services"
 
 run:
-	GOCACHE=$(GOCACHE) go run ./cmd/main.go
+	GOCACHE=$(GOCACHE) go run ./cmd
 
 dev: $(AIR_BIN)
 	$(AIR_BIN) -c .air.toml
@@ -34,7 +34,7 @@ $(AIR_BIN):
 
 build:
 	mkdir -p $(BIN_DIR)
-	GOCACHE=$(GOCACHE) go build -o $(BIN) ./cmd/main.go
+	GOCACHE=$(GOCACHE) go build -o $(BIN) ./cmd
 
 test:
 	GOCACHE=$(GOCACHE) go test ./...

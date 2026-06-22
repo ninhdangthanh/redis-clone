@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"redis-clone/internal"
 	"redis-clone/internal/aof"
 	"redis-clone/internal/command"
@@ -14,6 +16,7 @@ import (
 	"redis-clone/internal/store"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -53,13 +56,17 @@ func readRESPCommand(r *bufio.Reader) parsedCommand {
 	return parsedCommand{args: args}
 }
 
-func readCommands(r *bufio.Reader) <-chan parsedCommand {
+func readCommands(ctx context.Context, r *bufio.Reader) <-chan parsedCommand {
 	ch := make(chan parsedCommand, 1)
 	go func() {
 		defer close(ch)
 		for {
 			parsed := readRESPCommand(r)
-			ch <- parsed
+			select {
+			case ch <- parsed:
+			case <-ctx.Done():
+				return
+			}
 			if parsed.err != nil {
 				return
 			}
@@ -68,11 +75,13 @@ func readCommands(r *bufio.Reader) <-chan parsedCommand {
 	return ch
 }
 
-func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *pubsub.Hub) {
+func handleConn(serverCtx context.Context, conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *pubsub.Hub) {
 	defer conn.Close()
+	ctx, cancel := context.WithCancel(serverCtx)
+	defer cancel()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
-	cmdCh := readCommands(r)
+	cmdCh := readCommands(ctx, r)
 
 	commandContext := &AOFCommandContext{
 		CommandContext: &command.CommandContext{
@@ -85,7 +94,13 @@ func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *
 	}
 
 	for {
-		parsed, ok := <-cmdCh
+		var parsed parsedCommand
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return
+		case parsed, ok = <-cmdCh:
+		}
 		if !ok || parsed.err != nil {
 			return
 		}
@@ -106,7 +121,7 @@ func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *
 				commandContext.Writer.WriteError("wrong number of arguments for SUBSCRIBE")
 				continue
 			}
-			if serveSubscribedConn(cmdCh, commandContext.CommandContext, args) {
+			if serveSubscribedConn(ctx, cmdCh, commandContext.CommandContext, args) {
 				return
 			}
 			continue
@@ -128,7 +143,7 @@ func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *
 	}
 }
 
-func serveSubscribedConn(cmdCh <-chan parsedCommand, ctx *command.CommandContext, initialArgs []string) bool {
+func serveSubscribedConn(serverCtx context.Context, cmdCh <-chan parsedCommand, ctx *command.CommandContext, initialArgs []string) bool {
 	sub := ctx.PubSub.NewSubscriber()
 	defer ctx.PubSub.UnsubscribeAll(sub)
 
@@ -136,6 +151,8 @@ func serveSubscribedConn(cmdCh <-chan parsedCommand, ctx *command.CommandContext
 
 	for ctx.PubSub.SubscriptionCount(sub) > 0 {
 		select {
+		case <-serverCtx.Done():
+			return true
 		case parsed, ok := <-cmdCh:
 			if !ok || parsed.err != nil {
 				return true
@@ -314,11 +331,7 @@ func main() {
 	}()
 
 	store := store.NewStoreWithConfig(storeConfigFromEnv())
-	store.StartTTLChecker(time.Second)
 	pubsubHub := pubsub.NewHub()
-
-	// change memory limitation,...
-	store.StartEvictionChecker(time.Second)
 
 	if err := ReplayAOF(store, aofFile); err != nil {
 		fmt.Printf("AOF replay error: %v\n", err)
@@ -330,16 +343,28 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("Failed to start server: %v", err))
 	}
-	defer ln.Close()
-
 	fmt.Println("Redis clone listening on :6379")
 
-	for {
-		conn, err := ln.Accept()
+	server := NewServer(ln, store, aofFile, pubsubHub)
+	server.StartWorkers()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve() }()
+
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case <-signalCtx.Done():
+		fmt.Println("Shutting down Redis clone...")
+	case err := <-serveErr:
 		if err != nil {
-			fmt.Printf("Connection error: %v\n", err)
-			continue
+			fmt.Printf("Server error: %v\n", err)
 		}
-		go handleConn(conn, store, aofFile, pubsubHub)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		fmt.Printf("Shutdown error: %v\n", err)
 	}
 }
