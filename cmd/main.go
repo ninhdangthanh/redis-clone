@@ -10,6 +10,7 @@ import (
 	"redis-clone/internal/aof"
 	"redis-clone/internal/command"
 	"redis-clone/internal/dispatcher"
+	"redis-clone/internal/pubsub"
 	"redis-clone/internal/store"
 	"strconv"
 	"strings"
@@ -21,51 +22,95 @@ type AOFCommandContext struct {
 	Success bool
 }
 
-func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF) {
+type parsedCommand struct {
+	args        []string
+	protocolErr string
+	err         error
+}
+
+func readRESPCommand(r *bufio.Reader) parsedCommand {
+	line, err := internal.ReadLine(r)
+	if err != nil {
+		return parsedCommand{err: err}
+	}
+	if !strings.HasPrefix(line, "*") {
+		return parsedCommand{protocolErr: "ERR only RESP arrays supported"}
+	}
+
+	n, err := strconv.Atoi(line[1:])
+	if err != nil || n <= 0 {
+		return parsedCommand{protocolErr: "ERR invalid RESP array length"}
+	}
+
+	args := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		s, err := internal.ReadBulkString(r)
+		if err != nil {
+			return parsedCommand{err: err}
+		}
+		args = append(args, s)
+	}
+	return parsedCommand{args: args}
+}
+
+func readCommands(r *bufio.Reader) <-chan parsedCommand {
+	ch := make(chan parsedCommand, 1)
+	go func() {
+		defer close(ch)
+		for {
+			parsed := readRESPCommand(r)
+			ch <- parsed
+			if parsed.err != nil {
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *pubsub.Hub) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
+	cmdCh := readCommands(r)
 
 	commandContext := &AOFCommandContext{
 		CommandContext: &command.CommandContext{
 			Writer:        command.NewRespWriter(w),
 			Store:         store,
+			PubSub:        pubsubHub,
 			Authenticated: true, // TODO: this is temporary, implement AUTH later
 		},
 		Success: false,
 	}
 
 	for {
-		line, err := internal.ReadLine(r)
-		if err != nil {
+		parsed, ok := <-cmdCh
+		if !ok || parsed.err != nil {
 			return
 		}
-		if !strings.HasPrefix(line, "*") {
-			fmt.Fprint(w, "-ERR only RESP arrays supported\r\n")
+		if parsed.protocolErr != "" {
+			fmt.Fprintf(w, "-%s\r\n", parsed.protocolErr)
 			w.Flush()
 			continue
 		}
 
-		n, err := strconv.Atoi(line[1:])
-		if err != nil || n <= 0 {
-			fmt.Fprint(w, "-ERR invalid RESP array length\r\n")
-			w.Flush()
-			continue
-		}
-		args := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			s, err := internal.ReadBulkString(r)
-			if err != nil {
-				return
-			}
-			args = append(args, s)
-		}
-
+		args := parsed.args
 		if len(args) == 0 {
 			continue
 		}
 
 		cmd := strings.ToUpper(args[0])
+		if cmd == "SUBSCRIBE" {
+			if len(args) < 2 {
+				commandContext.Writer.WriteError("wrong number of arguments for SUBSCRIBE")
+				continue
+			}
+			if serveSubscribedConn(cmdCh, commandContext.CommandContext, args) {
+				return
+			}
+			continue
+		}
 
 		commandContext.Success = dispatcher.Dispatch(commandContext.CommandContext, args)
 
@@ -81,6 +126,95 @@ func handleConn(conn net.Conn, store *store.Store, aofFile *aof.AOF) {
 			return
 		}
 	}
+}
+
+func serveSubscribedConn(cmdCh <-chan parsedCommand, ctx *command.CommandContext, initialArgs []string) bool {
+	sub := ctx.PubSub.NewSubscriber()
+	defer ctx.PubSub.UnsubscribeAll(sub)
+
+	subscribeChannels(ctx, sub, initialArgs[1:])
+
+	for ctx.PubSub.SubscriptionCount(sub) > 0 {
+		select {
+		case parsed, ok := <-cmdCh:
+			if !ok || parsed.err != nil {
+				return true
+			}
+			if parsed.protocolErr != "" {
+				ctx.Writer.WriteError(parsed.protocolErr)
+				continue
+			}
+			if handleSubscribedModeCommand(ctx, sub, parsed.args) {
+				return true
+			}
+		case msg := <-sub.Messages:
+			command.WritePubSubMessage(ctx.Writer, msg)
+		}
+	}
+
+	return false
+}
+
+func subscribeChannels(ctx *command.CommandContext, sub *pubsub.Subscriber, channels []string) {
+	for _, channel := range channels {
+		count := ctx.PubSub.Subscribe(sub, channel)
+		command.WriteSubscribeReply(ctx.Writer, "subscribe", channel, count)
+	}
+}
+
+func handleSubscribedModeCommand(ctx *command.CommandContext, sub *pubsub.Subscriber, args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	cmd := strings.ToUpper(args[0])
+	switch cmd {
+	case "SUBSCRIBE":
+		if len(args) < 2 {
+			ctx.Writer.WriteError("wrong number of arguments for SUBSCRIBE")
+			return false
+		}
+		subscribeChannels(ctx, sub, args[1:])
+	case "UNSUBSCRIBE":
+		unsubscribeChannels(ctx, sub, args[1:])
+	case "PING":
+		writeSubscribedPong(ctx.Writer, args)
+	case "QUIT":
+		command.HandleQuit(ctx, args)
+		return true
+	default:
+		ctx.Writer.WriteError("ERR Can't execute command in subscribed mode")
+	}
+	return false
+}
+
+func unsubscribeChannels(ctx *command.CommandContext, sub *pubsub.Subscriber, channels []string) {
+	if len(channels) == 0 {
+		channels = sub.Channels()
+		if len(channels) == 0 {
+			command.WriteSubscribeReply(ctx.Writer, "unsubscribe", "", 0)
+			return
+		}
+	}
+
+	for _, channel := range channels {
+		count := ctx.PubSub.Unsubscribe(sub, channel)
+		command.WriteSubscribeReply(ctx.Writer, "unsubscribe", channel, count)
+	}
+}
+
+func writeSubscribedPong(w *command.RespWriter, args []string) {
+	if len(args) > 2 {
+		w.WriteError("wrong number of arguments for PING")
+		return
+	}
+	msg := ""
+	if len(args) == 2 {
+		msg = args[1]
+	}
+	w.WriteArrayHeader(2)
+	w.WriteBulkString([]byte("pong"))
+	w.WriteBulkString([]byte(msg))
 }
 
 func ReplayAOF(store *store.Store, aofFile *aof.AOF) error {
@@ -181,6 +315,7 @@ func main() {
 
 	store := store.NewStoreWithConfig(storeConfigFromEnv())
 	store.StartTTLChecker(time.Second)
+	pubsubHub := pubsub.NewHub()
 
 	// change memory limitation,...
 	store.StartEvictionChecker(time.Second)
@@ -205,6 +340,6 @@ func main() {
 			fmt.Printf("Connection error: %v\n", err)
 			continue
 		}
-		go handleConn(conn, store, aofFile)
+		go handleConn(conn, store, aofFile, pubsubHub)
 	}
 }

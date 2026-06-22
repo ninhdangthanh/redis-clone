@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"redis-clone/internal/pubsub"
 	"redis-clone/internal/store"
 )
 
@@ -81,5 +82,24 @@ func TestUnauthenticatedWriteCommandFails(t *testing.T) {
 	}
 	if got := buf.String(); got != "-NOAUTH Authentication required\r\n" {
 		t.Fatalf("NOAUTH response = %q", got)
+	}
+}
+
+func TestPublishReturnsSubscriberCount(t *testing.T) {
+	ctx, buf := newCommandTestContext()
+	ctx.PubSub = pubsub.NewHub()
+	sub := ctx.PubSub.NewSubscriber()
+	ctx.PubSub.Subscribe(sub, "news")
+
+	if !HandlePublish(ctx, []string{"PUBLISH", "news", "hello"}) {
+		t.Fatal("PUBLISH returned false")
+	}
+	if got := buf.String(); got != ":1\r\n" {
+		t.Fatalf("PUBLISH response = %q, want :1", got)
+	}
+
+	msg := <-sub.Messages
+	if msg.Channel != "news" || string(msg.Payload) != "hello" {
+		t.Fatalf("published message = (%q, %q)", msg.Channel, msg.Payload)
 	}
 }

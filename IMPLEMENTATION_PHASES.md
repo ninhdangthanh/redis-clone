@@ -272,16 +272,21 @@ Read commands (`GET`, `TTL`, `PING`, etc.) are never written to the AOF.
 
 ---
 
-## Phase 9 · Pub/Sub ❌
+## Phase 9 · Pub/Sub ✅
 
-**Status:** Not yet implemented.
-#### thử cả Observe design pattern và go routine, channel
+**Status:** Implemented.
+#### Uses an Observer-style hub plus goroutines/channels for connection fan-out.
 
-**Plan:**
-- Maintain a `map[channel][]subscriber` where each subscriber is a `chan []byte`.
-- `SUBSCRIBE channel` blocks the connection, sending messages as they arrive.
-- `PUBLISH channel message` iterates the subscriber list and sends to each channel.
-- Unsubscribing removes the subscriber entry and closes its channel.
+**What was added:**
+- `internal/pubsub.Hub`, which keeps channel-to-subscriber mappings.
+- `Subscriber` objects with buffered `Messages` channels.
+- `PUBLISH channel message`, returning the number of subscribed receivers.
+- `SUBSCRIBE channel [channel ...]`, which switches the connection into subscribed mode.
+- `UNSUBSCRIBE [channel ...]`, including unsubscribe-all behavior.
+- Subscribed-mode command restrictions: only `SUBSCRIBE`, `UNSUBSCRIBE`, `PING`, and `QUIT` are accepted.
+- Redis-style Pub/Sub wire responses for subscribe, unsubscribe, publish count, and message delivery.
+
+Pub/Sub state is intentionally runtime-only: it is not stored in `Store` and is not written to AOF.
 
 ---
 

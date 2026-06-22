@@ -43,6 +43,9 @@ func Dispatch(ctx *command.CommandContext, args []string) bool {
 	case "EXPIRE", "PEXPIREAT", "TTL":
 		return command.HandleTTLCommands(ctx, args)
 
+	case "PUBLISH":
+		return command.HandlePublish(ctx, args)
+
 	default:
 		ctx.Writer.WriteError(fmt.Sprintf("unknown command '%s'", cmd))
 		return false
