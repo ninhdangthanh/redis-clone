@@ -7,7 +7,7 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o redis-server ./cmd/main.go
+RUN go build -o redis-server ./cmd
 
 FROM debian:bookworm-slim
 

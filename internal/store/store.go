@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -690,30 +691,50 @@ func (s *Store) TTL(key string) int64 {
 	return ttl / 1000
 }
 
-func (s *Store) StartTTLChecker(interval time.Duration) {
+// StartTTLCheckerContext removes expired keys until ctx is cancelled.
+func (s *Store) StartTTLCheckerContext(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 		for {
-			time.Sleep(interval)
-			now := time.Now().UnixMilli()
-			s.mu.Lock()
-			for key, val := range s.data {
-				if val.ExpiresAt > 0 && now >= val.ExpiresAt {
-					delete(s.data, key)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now().UnixMilli()
+				s.mu.Lock()
+				for key, val := range s.data {
+					if val.ExpiresAt > 0 && now >= val.ExpiresAt {
+						delete(s.data, key)
+					}
 				}
+				s.mu.Unlock()
 			}
-			s.mu.Unlock()
 		}
 	}()
+	return done
 }
 
-func (s *Store) StartEvictionChecker(interval time.Duration) {
+// StartEvictionCheckerContext enforces the memory limit until ctx is cancelled.
+func (s *Store) StartEvictionCheckerContext(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 		for {
-			time.Sleep(interval)
-			now := time.Now().UnixMilli()
-			s.mu.Lock()
-			_ = s.enforceMemoryLimitLocked(now, "")
-			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now().UnixMilli()
+				s.mu.Lock()
+				_ = s.enforceMemoryLimitLocked(now, "")
+				s.mu.Unlock()
+			}
 		}
 	}()
+	return done
 }

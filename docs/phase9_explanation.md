@@ -628,21 +628,7 @@ GET key / SET key value ở A -> phải chạy được normal mode
 Restart server -> subscriptions cũ biến mất
 ```
 
-## 17. Câu hỏi tự kiểm tra
-
-1. Command `PING` trong subscribed mode đi qua channel nào? `cmdCh`.
-2. Message từ `PUBLISH` đi qua channel nào? `sub.Messages`.
-3. Tại sao `readCommands` phải là goroutine riêng? Để subscribed connection có thể chờ command và Pub/Sub message đồng thời qua `select`.
-4. Khi nào outer loop của `handleConn` đọc `cmdCh`? Trước subscribe và sau khi unsubscribe hết channel.
-5. Khi nào `serveSubscribedConn` đọc `cmdCh`? Trong khi subscription count lớn hơn 0.
-6. Tại sao `map[*Subscriber]struct{}` tốt hơn slice ở đây? Uniqueness và subscribe/unsubscribe trung bình `O(1)`.
-7. Tại sao không giữ `h.mu` khi gửi vào `sub.Messages`? Subscriber chậm có thể làm send block và khóa các thao tác Hub khác.
-8. Tại sao `GET` chạy được sau unsubscribe cuối? `serveSubscribedConn` đã return, connection đã trở lại normal mode.
-9. Buffer `sub.Messages` đầy thì điều gì xảy ra? `Publish` block, không có error hay tự drop message.
-10. Unbuffered channel bắt sender chờ đến khi nào? Đến khi receiver bắt đầu nhận message.
-11. Buffer cao đánh đổi điều gì? Ít block hơn trong burst ngắn, nhưng dùng nhiều RAM và có thể che giấu slow subscriber.
-
-## 18. Extra questions và ý tưởng học thêm
+## 17. Extra questions và ý tưởng học thêm
 
 Phần này chưa phải yêu cầu để hoàn thành Phase 9. Đây là các câu hỏi và bài tập tự nhiên để học sâu hơn từ implementation Pub/Sub hiện tại.
 
