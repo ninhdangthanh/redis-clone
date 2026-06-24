@@ -75,7 +75,7 @@ func readCommands(ctx context.Context, r *bufio.Reader) <-chan parsedCommand {
 	return ch
 }
 
-func handleConn(serverCtx context.Context, conn net.Conn, store *store.Store, aofFile *aof.AOF, pubsubHub *pubsub.Hub) {
+func handleConn(serverCtx context.Context, conn net.Conn, executor *CommandExecutor, pubsubHub *pubsub.Hub) {
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(serverCtx)
 	defer cancel()
@@ -83,14 +83,10 @@ func handleConn(serverCtx context.Context, conn net.Conn, store *store.Store, ao
 	w := bufio.NewWriter(conn)
 	cmdCh := readCommands(ctx, r)
 
-	commandContext := &AOFCommandContext{
-		CommandContext: &command.CommandContext{
-			Writer:        command.NewRespWriter(w),
-			Store:         store,
-			PubSub:        pubsubHub,
-			Authenticated: true, // TODO: this is temporary, implement AUTH later
-		},
-		Success: false,
+	commandContext := &command.CommandContext{
+		Writer:        command.NewRespWriter(w),
+		PubSub:        pubsubHub,
+		Authenticated: true, // TODO: this is temporary, implement AUTH later
 	}
 
 	for {
@@ -121,23 +117,17 @@ func handleConn(serverCtx context.Context, conn net.Conn, store *store.Store, ao
 				commandContext.Writer.WriteError("wrong number of arguments for SUBSCRIBE")
 				continue
 			}
-			if serveSubscribedConn(ctx, cmdCh, commandContext.CommandContext, args) {
+			if serveSubscribedConn(ctx, cmdCh, commandContext, args) {
 				return
 			}
 			continue
 		}
 
-		commandContext.Success = dispatcher.Dispatch(commandContext.CommandContext, args)
-
-		if commandContext.Success && aofFile.ShouldPersistCommand(cmd) {
-			if err := aofFile.Append(aof.ArgsForAppend(args, time.Now())); err != nil {
-				fmt.Printf("AOF append error: %v\n", err)
-			}
+		result, ok := executor.Submit(ctx, w, args)
+		if !ok {
+			return
 		}
-
-		w.Flush()
-
-		if cmd == "QUIT" && commandContext.Success {
+		if result.quit {
 			return
 		}
 	}

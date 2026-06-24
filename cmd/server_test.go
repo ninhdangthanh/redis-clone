@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -8,6 +10,7 @@ import (
 	"redis-clone/internal/aof"
 	"redis-clone/internal/pubsub"
 	"redis-clone/internal/store"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -62,5 +65,44 @@ func TestShutdownReleasesPortAndClosesIdleClient(t *testing.T) {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("second shutdown: %v", err)
+	}
+}
+
+func TestCommandExecutorSerializesConcurrentClientCommands(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	aofFile, err := aof.Open(filepath.Join(t.TempDir(), "appendonly.aof"), aof.FsyncNever)
+	if err != nil {
+		t.Fatalf("open aof: %v", err)
+	}
+	defer aofFile.Close()
+
+	executor := NewCommandExecutor(ctx, store.NewStore(), aofFile, pubsub.NewHub())
+	defer func() {
+		cancel()
+		if err := executor.Stop(context.Background()); err != nil {
+			t.Fatalf("stop executor: %v", err)
+		}
+	}()
+
+	const clients = 20
+	results := make(chan string, clients)
+	for i := 0; i < clients; i++ {
+		go func(i int) {
+			var output bytes.Buffer
+			writer := bufio.NewWriter(&output)
+			_, ok := executor.Submit(ctx, writer, []string{"SET", "client:" + strconv.Itoa(i), "value"})
+			if !ok {
+				results <- "executor stopped"
+				return
+			}
+			results <- output.String()
+		}(i)
+	}
+
+	for i := 0; i < clients; i++ {
+		if got := <-results; got != "+OK\r\n" {
+			t.Fatalf("unexpected SET response: %q", got)
+		}
 	}
 }

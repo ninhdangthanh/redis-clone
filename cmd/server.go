@@ -19,6 +19,7 @@ type Server struct {
 	store    *store.Store
 	aof      *aof.AOF
 	pubsub   *pubsub.Hub
+	executor *CommandExecutor
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -37,7 +38,7 @@ type Server struct {
 
 func NewServer(listener net.Listener, st *store.Store, aofFile *aof.AOF, hub *pubsub.Hub) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Server{
+	server := &Server{
 		listener: listener,
 		store:    st,
 		aof:      aofFile,
@@ -46,6 +47,8 @@ func NewServer(listener net.Listener, st *store.Store, aofFile *aof.AOF, hub *pu
 		cancel:   cancel,
 		conns:    make(map[net.Conn]struct{}),
 	}
+	server.executor = NewCommandExecutor(ctx, st, aofFile, hub)
+	return server
 }
 
 func (s *Server) StartWorkers() {
@@ -83,7 +86,7 @@ func (s *Server) trackConnection(conn net.Conn) {
 	go func() {
 		defer s.connWG.Done()
 		defer s.removeConnection(conn)
-		handleConn(s.ctx, conn, s.store, s.aof, s.pubsub)
+		handleConn(s.ctx, conn, s.executor, s.pubsub)
 	}()
 }
 
@@ -139,6 +142,9 @@ func (s *Server) shutdown(ctx context.Context) error {
 	}
 	if err := waitChannels(ctx, s.workers); err != nil {
 		return errors.Join(shutdownErr, fmt.Errorf("wait for workers: %w", err))
+	}
+	if err := s.executor.Stop(ctx); err != nil {
+		return errors.Join(shutdownErr, fmt.Errorf("wait for command executor: %w", err))
 	}
 	if err := s.aof.Close(); err != nil {
 		shutdownErr = errors.Join(shutdownErr, fmt.Errorf("close aof: %w", err))
