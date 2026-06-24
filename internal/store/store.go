@@ -691,10 +691,6 @@ func (s *Store) TTL(key string) int64 {
 	return ttl / 1000
 }
 
-func (s *Store) StartTTLChecker(interval time.Duration) {
-	s.StartTTLCheckerContext(context.Background(), interval)
-}
-
 // StartTTLCheckerContext removes expired keys until ctx is cancelled.
 func (s *Store) StartTTLCheckerContext(ctx context.Context, interval time.Duration) <-chan struct{} {
 	done := make(chan struct{})
@@ -719,10 +715,6 @@ func (s *Store) StartTTLCheckerContext(ctx context.Context, interval time.Durati
 		}
 	}()
 	return done
-}
-
-func (s *Store) StartEvictionChecker(interval time.Duration) {
-	s.StartEvictionCheckerContext(context.Background(), interval)
 }
 
 // StartEvictionCheckerContext enforces the memory limit until ctx is cancelled.
