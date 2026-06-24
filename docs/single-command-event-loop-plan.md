@@ -1,53 +1,54 @@
-# Single Command Event Loop Plan
+# Kế hoạch event loop một lệnh
 
-## Goal
+## Mục tiêu
 
-Make normal Redis commands execute in one server-owned loop. Many clients may
-read and write TCP sockets concurrently, but only the event loop runs normal
-client command handlers. TTL and eviction remain background workers, protected
-by the Store mutex.
+Cho các lệnh Redis thông thường chạy trong một vòng lặp do server sở hữu.
+Nhiều client vẫn có thể đọc và ghi TCP socket đồng thời, nhưng chỉ event loop
+thực thi các handler lệnh của client thông thường. TTL và eviction vẫn là các
+worker nền, được bảo vệ bởi mutex của Store.
 
-## Design
+## Thiết kế
 
 ```text
-clients (many TCP connections)
+clients (nhiều kết nối TCP)
         |
         v
-per-connection reader goroutines
+goroutine đọc theo từng kết nối
         |
         v
-bounded command queue (256 requests)
+command queue có giới hạn (256 request)
         |
         v
-one CommandExecutor goroutine
+1 goroutine CommandExecutor
   - dispatcher
-  - Store access
-  - AOF append
-  - response write / flush
+  - truy cập Store
+  - append AOF
+  - ghi / flush response
 ```
 
-Each connection submits one command and waits for its completion before reading
-the next command. That preserves response order for pipelined requests while
-the bounded queue provides backpressure under load.
+Mỗi kết nối gửi một lệnh và đợi lệnh đó hoàn tất trước khi đọc lệnh kế tiếp.
+Như vậy thứ tự response của các request pipelining vẫn được giữ nguyên, còn
+queue có giới hạn sẽ tạo backpressure khi tải cao.
 
-## Implementation phases
+## Các giai đoạn triển khai
 
-- [x] Add `CommandExecutor`, with one request queue and one execution goroutine.
-- [x] Route normal commands such as `GET`, `SET`, collections, TTL, `PUBLISH`,
-  `INFO`, and `QUIT` through that executor.
-- [x] Start the executor with the server context and wait for it during shutdown.
-- [x] Keep socket reading concurrent; it is I/O waiting, not database execution.
-- [x] Keep subscribed connections on their dedicated message-writing path.
-  `PUBLISH` from normal clients still passes through the event loop; subscription
-  bookkeeping remains protected by the Pub/Sub hub mutex.
-- [x] Add coverage with 20 simultaneous clients submitting commands.
-- [ ] Decide whether Store's mutex should remain. It is still useful for TTL and
-  eviction workers; removing it safely needs those workers to submit work to the
-  event loop as well.
+- [x] Thêm `CommandExecutor`, với một request queue và một goroutine thực thi.
+- [x] Đi các lệnh thông thường như `GET`, `SET`, collections, TTL, `PUBLISH`,
+  `INFO`, và `QUIT` qua executor này.
+- [x] Khởi động executor cùng server context và chờ nó khi shutdown.
+- [x] Giữ việc đọc socket chạy đồng thời; đây là phần chờ I/O, không phải phần
+  thực thi database.
+- [x] Giữ các kết nối đang subscribe ở luồng ghi message riêng của chúng.
+  `PUBLISH` từ client thông thường vẫn đi qua event loop; phần bookkeeping của
+  subscription vẫn được bảo vệ bởi mutex của Pub/Sub hub.
+- [x] Thêm coverage với 20 client đồng thời gửi lệnh.
+- [ ] Quyết định có giữ mutex của Store hay không. Nó vẫn hữu ích cho TTL và
+  eviction worker; muốn bỏ an toàn thì các worker đó cũng phải submit công việc
+  vào event loop.
 
-## Non-goals
+## Không đặt mục tiêu
 
-This does not attempt to copy Redis's exact networking implementation. Go still
-uses goroutines for accepting clients and waiting on socket reads. The important
-single-threaded property is that command handlers access the database in one
-deterministic sequence.
+Phần này không cố sao chép chính xác cách Redis triển khai networking. Go vẫn
+dùng goroutine để accept client và chờ đọc socket. Tính chất một luồng quan
+trọng ở đây là các command handler truy cập database theo một chuỗi xác định,
+duy nhất.
