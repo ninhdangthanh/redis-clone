@@ -290,9 +290,9 @@ Pub/Sub state is intentionally runtime-only: it is not stored in `Store` and is 
 
 ---
 
-## Phase 10 · Graceful Shutdown ❌
+## Phase 10 · Graceful Shutdown ✅
 
-**Status:** Not yet implemented.
+**Status:** Implemented.
 
 **Plan:**
 - Use `signal.NotifyContext` or `signal.Notify` to catch `SIGTERM` / `SIGINT`.
