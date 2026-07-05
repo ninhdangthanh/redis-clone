@@ -25,16 +25,19 @@ const (
 )
 
 type Value struct {
-	Type      ValueType
-	Str       []byte
-	List      [][]byte
-	Set       map[string]struct{}
-	Hash      map[string][]byte
+	Type ValueType // kiểu dữ liệu, quyết định trường nào bên dưới được dùng
+	Str  []byte    // dữ liệu cho StringType
+	List [][]byte  // dữ liệu cho ListType
+	Set  map[string]struct{}
+	Hash map[string][]byte
+
+	// TTL: thời điểm hết hạn (Unix nanoseconds). 0 = không hết hạn.
+	// Dùng để xoá key khi hết hạn và cho policy volatile-* (chỉ evict key có TTL).
 	ExpiresAt int64
 
-	CreatedAt    int64
-	LastAccessAt int64
-	AccessCount  uint64
+	CreatedAt    int64  // thời điểm tạo (Unix ns); hiện chỉ được ghi, chưa đọc ở đâu — metadata để dành (age/OBJECT IDLETIME/debug)
+	LastAccessAt int64  // lần truy cập gần nhất (Unix ns); dùng cho eviction LRU (allkeys-lru, volatile-lru)
+	AccessCount  uint64 // số lần truy cập; dùng cho eviction LFU (allkeys-lfu)
 }
 
 type EvictionPolicy string
